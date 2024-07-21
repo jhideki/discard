@@ -1,9 +1,14 @@
 use std::io::{self, Write};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-pub fn get_user_input() -> RTCSessionDescription {
+use crate::core::rtc::ConnType;
+
+pub fn get_user_input(conn_type: &ConnType) -> RTCSessionDescription {
     let mut input = String::new();
-    print!("Paste in the remote SDP: ");
+    match conn_type {
+        ConnType::Offerer => println!("Enter answer:"),
+        ConnType::Answerer => println!("Enter offer:"),
+    }
     io::stdout().flush().unwrap();
     io::stdin().read_line(&mut input).unwrap();
     let input = input.trim();

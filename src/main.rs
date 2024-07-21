@@ -1,5 +1,13 @@
-use core::rtc;
+mod utils {
+    pub mod debug;
+    pub mod lib;
+}
+mod core {
+    pub mod rtc;
+}
 
+use clap::{Arg, Command};
+use core::{rtc, rtc::ConnType};
 use utils::debug;
 use webrtc::{
     api::{
@@ -10,15 +18,19 @@ use webrtc::{
     peer_connection::configuration::RTCConfiguration,
 };
 
-mod utils {
-    pub mod debug;
-    pub mod lib;
-}
-mod core {
-    pub mod rtc;
-}
 #[tokio::main]
 async fn main() {
+    let matches = Command::new("discard")
+        .arg(
+            Arg::new("offer")
+                .short('o')
+                .action(clap::ArgAction::SetTrue),
+        )
+        .get_matches();
+    let is_offerer = matches
+        .get_one::<bool>("offer")
+        .expect("error parsing cli args");
+    println!("is_remote: {}", is_offerer);
     let config = RTCConfiguration {
         ice_servers: vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -36,7 +48,14 @@ async fn main() {
         .with_media_engine(m)
         .with_interceptor_registry(registry)
         .build();
-    let local = rtc::Local::new(&api, config.clone()).await;
-    local.offer().await;
-    let answer = debug::get_user_input();
+
+    if *is_offerer {
+        println!("We are the offerer!");
+        let local = rtc::Connection::new(&api, config.clone(), ConnType::Offerer).await;
+        local.offer().await;
+    } else {
+        println!("We are the answerer!");
+        let remote = rtc::Connection::new(&api, config.clone(), ConnType::Answerer).await;
+        remote.answer().await;
+    }
 }
