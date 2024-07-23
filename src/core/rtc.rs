@@ -21,7 +21,7 @@ pub enum ConnType {
 
 pub struct Connection {
     peer_connection: Arc<Mutex<RTCPeerConnection>>,
-    conn_type: ConnType,
+    pub conn_type: ConnType,
     candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
     ice_notify: Arc<Notify>,
 }
@@ -43,22 +43,25 @@ impl Connection {
     pub async fn monitor_connection(&self) {
         let (done_tx, mut done_rx) = mpsc::channel::<()>(1);
         let pc = Arc::clone(&self.peer_connection);
-        let pc = pc.lock().await;
-        pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-            match s {
-                RTCPeerConnectionState::New => println!("New connection"),
-                RTCPeerConnectionState::Failed => {
-                    println!("Failed connection");
-                    let _ = done_tx.send(());
+        {
+            let pc = pc.lock().await;
+            pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
+                match s {
+                    RTCPeerConnectionState::New => println!("New connection"),
+                    RTCPeerConnectionState::Failed => {
+                        println!("Failed connection");
+                        let _ = done_tx.send(());
+                    }
+                    RTCPeerConnectionState::Closed => println!("Closed connection"),
+                    RTCPeerConnectionState::Connected => println!("Connected!"),
+                    RTCPeerConnectionState::Connecting => println!("Connecting..."),
+                    RTCPeerConnectionState::Unspecified => println!("Unspecified?"),
+                    _ => println!("???"),
                 }
-                RTCPeerConnectionState::Closed => println!("Closed connection"),
-                RTCPeerConnectionState::Connected => println!("Connected!"),
-                RTCPeerConnectionState::Connecting => println!("Connecting..."),
-                RTCPeerConnectionState::Unspecified => println!("Unspecified?"),
-                _ => println!("???"),
-            }
-            Box::pin(async {})
-        }));
+                Box::pin(async {})
+            }));
+        }
+
         loop {
             println!("Waiting...");
             if let signal = done_rx.recv().await {
@@ -79,17 +82,13 @@ impl Connection {
             let pc = Arc::clone(&candidates);
             let n = Arc::clone(&notify);
             Box::pin(async move {
-                println!("Inside box pin");
                 if let Some(candidate) = c {
                     let mut candidates = pc.lock().await;
                     candidates.push(candidate);
-                    println!("Notifying...");
                     n.notify_waiters();
-                    println!("notified...");
                 }
             })
         }));
-        println!("Init ice handlers finished");
     }
 
     fn print_local_sdp(&self) {
@@ -97,7 +96,6 @@ impl Connection {
         let pc = Arc::clone(&self.peer_connection);
         tokio::spawn(async move {
             loop {
-                println!("Waiting for not");
                 notify.notified().await;
                 println!("Printing sdps...");
                 let pc = pc.lock().await;
@@ -119,33 +117,32 @@ impl Connection {
         if let Err(e) = pc.set_local_description(offer).await {
             panic!("Error setting local offer {}", e);
         }
+    }
 
-        let answer = debug::get_sdp(&self.conn_type);
-        if let Err(e) = pc.set_remote_description(answer).await {
+    pub async fn set_remote(&self, sdp: RTCSessionDescription) {
+        println!("--------------Setting remote--------------");
+        let pc = Arc::clone(&self.peer_connection);
+        let pc = pc.lock().await;
+        if let Err(e) = pc.set_remote_description(sdp).await {
             panic!("Error setting local answer {}", e);
         }
-
-        println!("fn offer finished");
+        println!("--------------Done Setting remote--------------");
     }
 
     pub async fn answer(&self) {
+        println!("--------------Creating answer--------------");
         let pc = Arc::clone(&self.peer_connection);
         let pc = pc.lock().await;
-        let offer = debug::get_sdp(&self.conn_type);
-        if let Err(e) = pc.set_remote_description(offer).await {
-            panic!("Error setting remote desc: {}", e);
-        }
-
         let answer: RTCSessionDescription = pc
             .create_answer(None)
             .await
             .expect("Failed to create answer");
 
-        //wait until the offerer sets remote sdp
-        debug::wait();
         if let Err(e) = pc.set_local_description(answer).await {
             panic!("Error setting local desc: {}", e);
         }
+
+        println!("--------------Done createing answer--------------");
     }
 
     pub async fn create_data_channel(&self) {

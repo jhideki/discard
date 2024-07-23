@@ -59,9 +59,13 @@ async fn main() {
         conn.create_data_channel().await;
         conn.init_ice_handler().await;
         conn.offer().await;
+        let answer = debug::get_sdp(&conn.conn_type);
+        conn.set_remote(answer).await;
     } else {
         conn.register_data_channel().await;
         conn.init_ice_handler().await;
+        let offer = debug::get_sdp(&conn.conn_type);
+        conn.set_remote(offer).await;
         conn.answer().await;
     }
 
