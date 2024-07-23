@@ -39,7 +39,7 @@ async fn main() {
         ..Default::default()
     };
     let mut m = MediaEngine::default();
-    m.register_default_codecs();
+    let _ = m.register_default_codecs();
 
     let mut registry = Registry::new();
     registry =
@@ -49,13 +49,23 @@ async fn main() {
         .with_interceptor_registry(registry)
         .build();
 
-    if *is_offerer {
-        println!("We are the offerer!");
-        let local = rtc::Connection::new(&api, config.clone(), ConnType::Offerer).await;
-        local.offer().await;
+    //TEMP - used for testing offerer + answerer
+    //TODO: create client module to set up connections between peers
+    let conn_type = match *is_offerer {
+        true => ConnType::Offerer,
+        false => ConnType::Answerer,
+    };
+    let conn = rtc::Connection::new(&api, config.clone(), conn_type.clone()).await;
+    if conn_type == ConnType::Offerer {
+        conn.create_data_channel().await;
+        conn.init_ice_handler();
+        conn.offer().await;
     } else {
-        println!("We are the answerer!");
-        let remote = rtc::Connection::new(&api, config.clone(), ConnType::Answerer).await;
-        remote.answer().await;
+        conn.register_data_channel().await;
+        conn.init_ice_handler();
+        conn.answer().await;
     }
+
+    //Keep connection alive
+    conn.monitor_connection().await;
 }
