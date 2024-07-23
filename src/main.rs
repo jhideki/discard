@@ -5,7 +5,6 @@ mod utils {
 mod core {
     pub mod rtc;
 }
-
 use clap::{Arg, Command};
 use core::{rtc, rtc::ConnType};
 use utils::debug;
@@ -58,11 +57,11 @@ async fn main() {
     let conn = rtc::Connection::new(&api, config.clone(), conn_type.clone()).await;
     if conn_type == ConnType::Offerer {
         conn.create_data_channel().await;
-        conn.init_ice_handler();
+        conn.init_ice_handler().await;
         conn.offer().await;
     } else {
         conn.register_data_channel().await;
-        conn.init_ice_handler();
+        conn.init_ice_handler().await;
         conn.answer().await;
     }
 

@@ -1,5 +1,5 @@
 use crate::debug;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, Mutex, Notify};
 use webrtc::{
     api::API,
     data_channel::data_channel_message::DataChannelMessage,
@@ -11,7 +11,7 @@ use webrtc::{
     },
 };
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(PartialEq, Clone)]
 pub enum ConnType {
@@ -20,7 +20,7 @@ pub enum ConnType {
 }
 
 pub struct Connection {
-    peer_connection: RTCPeerConnection,
+    peer_connection: Arc<Mutex<RTCPeerConnection>>,
     conn_type: ConnType,
     candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
     ice_notify: Arc<Notify>,
@@ -33,7 +33,7 @@ impl Connection {
             .await
             .expect("Failed to establish pc");
         Self {
-            peer_connection,
+            peer_connection: Arc::new(Mutex::new(peer_connection)),
             conn_type,
             candidates: Arc::new(Mutex::new(Vec::new())),
             ice_notify: Arc::new(Notify::new()),
@@ -42,23 +42,23 @@ impl Connection {
 
     pub async fn monitor_connection(&self) {
         let (done_tx, mut done_rx) = mpsc::channel::<()>(1);
-        let _ = &self
-            .peer_connection
-            .on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-                match s {
-                    RTCPeerConnectionState::New => println!("New connection"),
-                    RTCPeerConnectionState::Failed => {
-                        println!("Failed connection");
-                        let _ = done_tx.send(());
-                    }
-                    RTCPeerConnectionState::Closed => println!("Closed connection"),
-                    RTCPeerConnectionState::Connected => println!("Connected!"),
-                    RTCPeerConnectionState::Connecting => println!("Connecting..."),
-                    RTCPeerConnectionState::Unspecified => println!("Unspecified?"),
-                    _ => println!("???"),
+        let pc = Arc::clone(&self.peer_connection);
+        let pc = pc.lock().await;
+        pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
+            match s {
+                RTCPeerConnectionState::New => println!("New connection"),
+                RTCPeerConnectionState::Failed => {
+                    println!("Failed connection");
+                    let _ = done_tx.send(());
                 }
-                Box::pin(async {})
-            }));
+                RTCPeerConnectionState::Closed => println!("Closed connection"),
+                RTCPeerConnectionState::Connected => println!("Connected!"),
+                RTCPeerConnectionState::Connecting => println!("Connecting..."),
+                RTCPeerConnectionState::Unspecified => println!("Unspecified?"),
+                _ => println!("???"),
+            }
+            Box::pin(async {})
+        }));
         loop {
             println!("Waiting...");
             if let signal = done_rx.recv().await {
@@ -68,69 +68,90 @@ impl Connection {
         }
     }
 
-    pub fn init_ice_handler(&self) {
+    pub async fn init_ice_handler(&self) {
+        self.print_local_sdp();
         let candidates = Arc::clone(&self.candidates);
         let notify = Arc::clone(&self.ice_notify);
-        let _ =
-            &self
-                .peer_connection
-                .on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
-                    println!("ICE candidate------------:\n {:?}", c);
-                    let pc = Arc::clone(&candidates);
-                    let n = Arc::clone(&notify);
-                    Box::pin(async move {
-                        if let Some(candidate) = c {
-                            let mut candidates = pc.lock().unwrap();
-                            candidates.push(candidate);
-                            n.notify_one();
-                        }
-                    })
-                }));
+        let pc = Arc::clone(&self.peer_connection);
+        let pc = pc.lock().await;
+        pc.on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
+            println!("ICE candidate------------:\n {:?}", c);
+            let pc = Arc::clone(&candidates);
+            let n = Arc::clone(&notify);
+            Box::pin(async move {
+                println!("Inside box pin");
+                if let Some(candidate) = c {
+                    let mut candidates = pc.lock().await;
+                    candidates.push(candidate);
+                    println!("Notifying...");
+                    n.notify_waiters();
+                    println!("notified...");
+                }
+            })
+        }));
+        println!("Init ice handlers finished");
+    }
+
+    fn print_local_sdp(&self) {
+        let notify = Arc::clone(&self.ice_notify);
+        let pc = Arc::clone(&self.peer_connection);
+        tokio::spawn(async move {
+            loop {
+                println!("Waiting for not");
+                notify.notified().await;
+                println!("Printing sdps...");
+                let pc = pc.lock().await;
+                let ld = pc
+                    .local_description()
+                    .await
+                    .expect("Error retreiving local description");
+                let ld = serde_json::to_string(&ld).expect("Failed to deserialized sdp");
+                println!("{}", ld);
+            }
+        });
     }
 
     pub async fn offer(&self) {
-        let offer = self
-            .peer_connection
-            .create_offer(None)
-            .await
-            .expect("Error creating offer");
+        let pc = Arc::clone(&self.peer_connection);
+        let pc = pc.lock().await;
+        let offer = pc.create_offer(None).await.expect("Error creating offer");
 
-        let offer_json = serde_json::to_string(&offer).expect("Error serializing offer sdp");
-        if let Err(e) = &self.peer_connection.set_local_description(offer).await {
+        if let Err(e) = pc.set_local_description(offer).await {
             panic!("Error setting local offer {}", e);
         }
-        println!("Offer : {}", offer_json);
 
         let answer = debug::get_sdp(&self.conn_type);
-        if let Err(e) = &self.peer_connection.set_remote_description(answer).await {
+        if let Err(e) = pc.set_remote_description(answer).await {
             panic!("Error setting local answer {}", e);
         }
+
+        println!("fn offer finished");
     }
 
     pub async fn answer(&self) {
+        let pc = Arc::clone(&self.peer_connection);
+        let pc = pc.lock().await;
         let offer = debug::get_sdp(&self.conn_type);
-        if let Err(e) = &self.peer_connection.set_remote_description(offer).await {
+        if let Err(e) = pc.set_remote_description(offer).await {
             panic!("Error setting remote desc: {}", e);
         }
 
-        let answer: RTCSessionDescription = self
-            .peer_connection
+        let answer: RTCSessionDescription = pc
             .create_answer(None)
             .await
             .expect("Failed to create answer");
 
-        let answer_json = serde_json::to_string(&answer).expect("Error serializing offer sdp");
-        println!("{}", answer_json);
         //wait until the offerer sets remote sdp
         debug::wait();
-        if let Err(e) = &self.peer_connection.set_local_description(answer).await {
+        if let Err(e) = pc.set_local_description(answer).await {
             panic!("Error setting local desc: {}", e);
         }
     }
 
     pub async fn create_data_channel(&self) {
-        let data_channel = &self
-            .peer_connection
+        let pc = Arc::clone(&self.peer_connection);
+        let pc = pc.lock().await;
+        let data_channel = pc
             .create_data_channel("messaging", None)
             .await
             .expect("Error creating data channel");
@@ -157,29 +178,30 @@ impl Connection {
     }
 
     pub async fn register_data_channel(&self) {
-        self.peer_connection
-            .on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-                println!("Data channel established from answerer");
-                let d2 = Arc::clone(&d);
-                Box::pin(async move {
-                    d.on_open(Box::new(move || {
-                        println!("Data channel {} {} is now open", d2.label(), d2.id());
-                        Box::pin(async move {
-                            println!("Getting message");
-                            let message = debug::get_message();
-                            if let Err(e) = d2.send_text(message).await {
-                                println!("Error sending message {}", e);
-                            }
-                        })
-                    }));
+        let pc = Arc::clone(&self.peer_connection);
+        let pc = pc.lock().await;
+        pc.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
+            println!("Data channel established from answerer");
+            let d2 = Arc::clone(&d);
+            Box::pin(async move {
+                d.on_open(Box::new(move || {
+                    println!("Data channel {} {} is now open", d2.label(), d2.id());
+                    Box::pin(async move {
+                        println!("Getting message");
+                        let message = debug::get_message();
+                        if let Err(e) = d2.send_text(message).await {
+                            println!("Error sending message {}", e);
+                        }
+                    })
+                }));
 
-                    d.on_message(Box::new(move |msg: DataChannelMessage| {
-                        let message =
-                            String::from_utf8(msg.data.to_vec()).expect("Error parsing message");
-                        println!("Message from peer: {}", message);
-                        Box::pin(async {})
-                    }));
-                })
-            }));
+                d.on_message(Box::new(move |msg: DataChannelMessage| {
+                    let message =
+                        String::from_utf8(msg.data.to_vec()).expect("Error parsing message");
+                    println!("Message from peer: {}", message);
+                    Box::pin(async {})
+                }));
+            })
+        }));
     }
 }
