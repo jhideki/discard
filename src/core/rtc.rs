@@ -120,17 +120,14 @@ impl Connection {
     }
 
     pub async fn set_remote(&self, sdp: RTCSessionDescription) {
-        println!("--------------Setting remote--------------");
         let pc = Arc::clone(&self.peer_connection);
         let pc = pc.lock().await;
         if let Err(e) = pc.set_remote_description(sdp).await {
             panic!("Error setting local answer {}", e);
         }
-        println!("--------------Done Setting remote--------------");
     }
 
     pub async fn answer(&self) {
-        println!("--------------Creating answer--------------");
         let pc = Arc::clone(&self.peer_connection);
         let pc = pc.lock().await;
         let answer: RTCSessionDescription = pc
@@ -141,8 +138,6 @@ impl Connection {
         if let Err(e) = pc.set_local_description(answer).await {
             panic!("Error setting local desc: {}", e);
         }
-
-        println!("--------------Done createing answer--------------");
     }
 
     pub async fn create_data_channel(&self) {

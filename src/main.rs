@@ -3,6 +3,7 @@ mod utils {
     pub mod lib;
 }
 mod core {
+    pub mod client;
     pub mod rtc;
 }
 use clap::{Arg, Command};
