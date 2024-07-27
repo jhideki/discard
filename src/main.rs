@@ -1,14 +1,20 @@
 mod utils {
+    pub mod constants;
     pub mod debug;
-    pub mod lib;
+    pub mod enums;
+}
+mod tests {
+    pub mod client;
 }
 mod core {
     pub mod client;
     pub mod rtc;
+    pub mod signal;
 }
 use clap::{Arg, Command};
-use core::{rtc, rtc::ConnType};
+use core::client;
 use utils::debug;
+use utils::enums::ConnType;
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
@@ -38,7 +44,7 @@ async fn main() {
         }],
         ..Default::default()
     };
-    let mut m = MediaEngine::default();
+    /*let mut m = MediaEngine::default();
     let _ = m.register_default_codecs();
 
     let mut registry = Registry::new();
@@ -68,8 +74,8 @@ async fn main() {
         let offer = debug::get_sdp(&conn.conn_type);
         conn.set_remote(offer).await;
         conn.answer().await;
-    }
+    }*/
 
     //Keep connection alive
-    conn.monitor_connection().await;
+    //conn.monitor_connection().await;
 }

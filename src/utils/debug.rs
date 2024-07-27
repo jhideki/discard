@@ -1,7 +1,10 @@
+//Temporary debug/test module. Will be converted to a proper test suite once prototyping is
+//finished.
 use std::io::{self, Write};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::core::rtc::ConnType;
+use crate::utils::enums::ConnType;
+pub const TEST_ROOT: &str = "/root";
 
 pub fn get_sdp(conn_type: &ConnType) -> RTCSessionDescription {
     let mut input = String::new();

@@ -1,4 +1,6 @@
 use crate::debug;
+use crate::utils::enums::ConnType;
+use anyhow::{Context, Result};
 use tokio::sync::{mpsc, Mutex, Notify};
 use webrtc::{
     api::API,
@@ -12,12 +14,6 @@ use webrtc::{
 };
 
 use std::sync::Arc;
-
-#[derive(PartialEq, Clone)]
-pub enum ConnType {
-    Offerer,
-    Answerer,
-}
 
 pub struct Connection {
     peer_connection: Arc<Mutex<RTCPeerConnection>>,
@@ -109,7 +105,7 @@ impl Connection {
         });
     }
 
-    pub async fn offer(&self) {
+    pub async fn offer(&self) -> Result<RTCSessionDescription> {
         let pc = Arc::clone(&self.peer_connection);
         let pc = pc.lock().await;
         let offer = pc.create_offer(None).await.expect("Error creating offer");
@@ -117,6 +113,11 @@ impl Connection {
         if let Err(e) = pc.set_local_description(offer).await {
             panic!("Error setting local offer {}", e);
         }
+        let offer = pc
+            .local_description()
+            .await
+            .context("Failed to retreive local sdp from offerer")?;
+        Ok(offer)
     }
 
     pub async fn set_remote(&self, sdp: RTCSessionDescription) {
@@ -195,5 +196,11 @@ impl Connection {
                 }));
             })
         }));
+    }
+
+    pub async fn add_ice_candidate(&mut self, candidate: RTCIceCandidate) {
+        let candidates = Arc::clone(&self.candidates);
+        let mut c = candidates.lock().await;
+        c.push(candidate);
     }
 }
