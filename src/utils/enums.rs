@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub enum SessionType {
     Idle,
     Chat,

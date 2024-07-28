@@ -16,7 +16,7 @@ use webrtc::{
 use std::sync::Arc;
 
 pub struct Connection {
-    peer_connection: Arc<Mutex<RTCPeerConnection>>,
+    pub peer_connection: Arc<Mutex<RTCPeerConnection>>,
     pub conn_type: ConnType,
     candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
     ice_notify: Arc<Notify>,

@@ -1,55 +1,61 @@
 use crate::core::rtc::Connection;
+use crate::core::signal::SDPExchange;
 use crate::debug::TEST_ROOT;
 use crate::utils::{
-    constants::STUN_SERVERS,
+    constants::{SDP_ALPN, STUN_SERVERS},
     enums::{ConnType, SessionType},
 };
 
+use anyhow::Result;
 use iroh::{
+    base::key::PublicKey,
     blobs::store::fs::Store,
-    node::{self, Node},
+    node::{self, Builder, Node},
 };
-use serde::{Deserialize, Serialize};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
     },
     ice_transport::ice_server::RTCIceServer,
     interceptor::registry::Registry,
-    peer_connection::{
-        configuration::RTCConfiguration, sdp::session_description::RTCSessionDescription,
-    },
+    peer_connection::configuration::RTCConfiguration,
 };
+
+use std::sync::Arc;
 
 struct RTCConfig {
     api: webrtc::api::API,
     config: RTCConfiguration,
 }
 
-//Session information that is stored in a iroh blob
-#[derive(Deserialize, Serialize)]
-pub struct Session {
-    session_type: SessionType,
-    local_sdp: Option<RTCSessionDescription>,
+//Node information to hand to peer 2 via other means.
+struct UserId {
+    node_id: PublicKey,
 }
 
 pub struct Client {
     pub connections: Vec<Connection>,
-    pub node: Node<Store>,
-    session: Session,
     rtc_config: RTCConfig,
+    node: Node<Store>,
+    sdp_exchange: Arc<SDPExchange>,
 }
 
 impl Client {
     pub async fn new() -> Self {
-        let node = node::Node::persistent(TEST_ROOT)
+        let builder = Builder::default()
+            .persist(TEST_ROOT)
             .await
-            .expect("Error creating node");
-        let node = node.spawn().await.expect("Error spawning node");
-        let session = Session {
-            session_type: SessionType::Idle,
-            local_sdp: None,
-        };
+            .expect("Failed to create store")
+            .disable_docs()
+            .build()
+            .await
+            .expect("Failed to build node");
+        let proto = SDPExchange::new(builder.client().clone());
+        let node = builder
+            .accept(SDP_ALPN, proto.clone())
+            .spawn()
+            .await
+            .expect("Failed to spawn node");
 
         let stun_servers = STUN_SERVERS.iter().map(|&s| s.to_string()).collect();
         let config = RTCConfiguration {
@@ -70,19 +76,15 @@ impl Client {
             .with_media_engine(m)
             .with_interceptor_registry(registry)
             .build();
-        println!("We are : {}", node.node_id());
-        let endpoint = node.endpoint();
-        //TODO: set up endpoint, signaler, and listner
-        endpoint.direct_addresses();
         Client {
             connections: Vec::new(),
-            node,
-            session,
             rtc_config: RTCConfig { api, config },
+            node,
+            sdp_exchange: proto,
         }
     }
 
-    pub async fn init_connection(&self, session_type: SessionType) {
+    pub async fn init_connection(&self, session_type: SessionType) -> Result<()> {
         let conn = Connection::new(
             &self.rtc_config.api,
             self.rtc_config.config.clone(),
@@ -96,15 +98,23 @@ impl Client {
             Ok(offer) => offer,
             Err(e) => panic!("{e}"),
         };
-        let session = Session {
-            local_sdp: Some(offer),
-            session_type,
-        };
-        let bytes = serde_json::to_vec(&session).expect("Failed to serialize sdp");
-        let client = self.node.blobs();
-        let hash = &self.node.blobs().add_bytes(bytes).await;
-        //let answer = debug::get_sdp(&conn.conn_type);
-        //conn.set_remote(answer).await;
+
+        let sdp_exchange = self.sdp_exchange.clone();
+        let pc = Arc::clone(&conn.peer_connection);
+        tokio::spawn(async move {
+            let notify = &sdp_exchange.sdp_notify;
+            //Continue listening for incoming sdps
+            loop {
+                notify.notified().await;
+                let mut rs = sdp_exchange.remote_sessions.lock().await;
+                if let Some(sdp) = rs.pop() {
+                    let peer_connection = pc.lock().await;
+                    peer_connection.set_remote_description(sdp);
+                }
+            }
+        });
+        conn.monitor_connection().await;
+        Ok(())
     }
 
     pub async fn answer(&self) {}
