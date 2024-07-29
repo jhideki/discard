@@ -1,6 +1,6 @@
 use anyhow::Result;
-use iroh::client::Iroh;
 use iroh::net::endpoint::get_remote_node_id;
+use iroh::net::{key::PublicKey, Endpoint};
 use iroh::node::ProtocolHandler;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -11,27 +11,24 @@ use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
-use crate::core::rtc;
-use crate::utils::enums::SessionType;
+use crate::utils::constants::SDP_ALPN;
 
-#[derive(Debug)]
-struct ICEExchange {
-    client: Iroh,
-    max_size: usize,
-    candidate: RTCIceCandidate,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Session {
+    pub ice_candidate: Option<RTCIceCandidate>,
+    pub sdp: Option<RTCSessionDescription>,
 }
-//TODO impl ProtocolHandler for ICEExchange
 
 #[derive(Debug)]
-pub struct SDPExchange {
-    client: Iroh,
+pub struct SessionExchange {
+    endpoint: Endpoint,
     max_size: usize,
     local_sessions: Mutex<Vec<RTCSessionDescription>>,
     pub remote_sessions: Mutex<Vec<RTCSessionDescription>>,
     pub sdp_notify: Notify,
 }
 
-impl ProtocolHandler for SDPExchange {
+impl ProtocolHandler for SessionExchange {
     fn accept(self: Arc<Self>, conn: iroh::net::endpoint::Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
             let connection = conn.await?;
@@ -53,11 +50,11 @@ impl ProtocolHandler for SDPExchange {
     }
 }
 
-impl SDPExchange {
-    pub fn new(client: Iroh) -> Arc<Self> {
+impl SessionExchange {
+    pub fn new(endpoint: Endpoint) -> Arc<Self> {
         let max_size = std::mem::size_of::<RTCSessionDescription>();
         Arc::new(Self {
-            client,
+            endpoint,
             max_size,
             local_sessions: Mutex::new(Vec::new()),
             remote_sessions: Mutex::new(Vec::new()),
@@ -71,5 +68,13 @@ impl SDPExchange {
     async fn add_remote(&mut self, session: RTCSessionDescription) {
         let mut sessions = self.remote_sessions.lock().await;
         sessions.push(session);
+    }
+    pub async fn send_session(&self, node_id: PublicKey, session: Session) -> Result<()> {
+        let conn = &self.endpoint.connect_by_node_id(node_id, SDP_ALPN).await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        let bytes = serde_json::to_vec(&session)?;
+        send.write_all(&bytes).await?;
+        send.finish().await?;
+        Ok(())
     }
 }

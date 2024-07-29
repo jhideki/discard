@@ -1,5 +1,5 @@
 use crate::core::rtc::Connection;
-use crate::core::signal::SDPExchange;
+use crate::core::signal::{Session, SessionExchange};
 use crate::debug::TEST_ROOT;
 use crate::utils::{
     constants::{SDP_ALPN, STUN_SERVERS},
@@ -7,6 +7,7 @@ use crate::utils::{
 };
 
 use anyhow::Result;
+use iroh::net::NodeId;
 use iroh::{
     base::key::PublicKey,
     blobs::store::fs::Store,
@@ -37,7 +38,7 @@ pub struct Client {
     pub connections: Vec<Connection>,
     rtc_config: RTCConfig,
     node: Node<Store>,
-    sdp_exchange: Arc<SDPExchange>,
+    session_exchange: Arc<SessionExchange>,
 }
 
 impl Client {
@@ -50,7 +51,9 @@ impl Client {
             .build()
             .await
             .expect("Failed to build node");
-        let proto = SDPExchange::new(builder.client().clone());
+
+        let proto = SessionExchange::new(builder.endpoint().clone());
+
         let node = builder
             .accept(SDP_ALPN, proto.clone())
             .spawn()
@@ -58,6 +61,7 @@ impl Client {
             .expect("Failed to spawn node");
 
         let stun_servers = STUN_SERVERS.iter().map(|&s| s.to_string()).collect();
+
         let config = RTCConfiguration {
             ice_servers: vec![RTCIceServer {
                 urls: stun_servers,
@@ -80,42 +84,30 @@ impl Client {
             connections: Vec::new(),
             rtc_config: RTCConfig { api, config },
             node,
-            sdp_exchange: proto,
+            session_exchange: proto,
         }
     }
 
-    pub async fn init_connection(&self, session_type: SessionType) -> Result<()> {
-        let conn = Connection::new(
+    pub async fn init_connection(&self) -> Result<()> {
+        //TODO: get remote node_id
+        let mut conn = Connection::new(
             &self.rtc_config.api,
             self.rtc_config.config.clone(),
             ConnType::Offerer,
+            self.session_exchange.clone(),
+            self.node.node_id(), //temp
         )
         .await;
 
+        //Typical WebRTC steps...
         conn.create_data_channel().await;
         conn.init_ice_handler().await;
-        let offer = match conn.offer().await {
-            Ok(offer) => offer,
-            Err(e) => panic!("{e}"),
-        };
-
-        let sdp_exchange = self.sdp_exchange.clone();
-        let pc = Arc::clone(&conn.peer_connection);
-        tokio::spawn(async move {
-            let notify = &sdp_exchange.sdp_notify;
-            //Continue listening for incoming sdps
-            loop {
-                notify.notified().await;
-                let mut rs = sdp_exchange.remote_sessions.lock().await;
-                if let Some(sdp) = rs.pop() {
-                    let peer_connection = pc.lock().await;
-                    peer_connection.set_remote_description(sdp);
-                }
-            }
-        });
+        conn.offer().await;
+        conn.get_remote().await;
         conn.monitor_connection().await;
+
+        //Returns handles to worker threads
+        let handles = conn.get_task_handles();
         Ok(())
     }
-
-    pub async fn answer(&self) {}
 }
