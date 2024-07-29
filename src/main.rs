@@ -11,6 +11,10 @@ mod core {
     pub mod rtc;
     pub mod signal;
 }
+mod db {
+    pub mod data;
+    pub mod db;
+}
 use clap::{Arg, Command};
 use core::client;
 use utils::debug;

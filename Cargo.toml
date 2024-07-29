@@ -13,3 +13,4 @@ serde = {version = "1", features = ["derive"]}
 clap = "4.5.9"
 iroh = { version = "0.21.0", default-features = false}
 anyhow = "1.0"
+rusqlite = "0.32.0"
