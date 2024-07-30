@@ -40,6 +40,7 @@ pub struct Client {
     rtc_config: RTCConfig,
     node: Node<Store>,
     session_exchange: Arc<SessionExchange>,
+    id_exchange: Arc<IdExchange>,
 }
 
 impl Client {
@@ -57,18 +58,7 @@ impl Client {
         let id_exchange = IdExchange::new(builder.endpoint().clone());
         let node = builder
             .accept(SDP_ALPN, session_exchange.clone())
-            .accept(
-                ID_APLN,
-                id_exchange
-                    .clone()
-                    .clone()
-                    .clone()
-                    .clone()
-                    .clone()
-                    .clone()
-                    .clone()
-                    .clone(),
-            )
+            .accept(ID_APLN, id_exchange.clone())
             .spawn()
             .await
             .expect("Failed to spawn node");
@@ -97,7 +87,8 @@ impl Client {
             connections: Vec::new(),
             rtc_config: RTCConfig { api, config },
             node,
-            session_exchange: proto,
+            session_exchange,
+            id_exchange,
         }
     }
 
@@ -116,7 +107,7 @@ impl Client {
         conn.create_data_channel().await;
         conn.init_ice_handler().await;
         conn.offer().await;
-        conn.get_remote().await;
+        conn.init_remote_handler().await;
         conn.monitor_connection().await;
 
         //Returns handles to worker threads
@@ -126,6 +117,9 @@ impl Client {
     }
 
     pub async fn receive_connection(&self) -> Result<()> {
+        let (tx, mut rx) = mpsc::channel(10);
+        let id_exchange = self.id_exchange.clone();
+        id_exchange.init(tx.clone()).await;
         if let Some(remote_node_id) = rx.recv().await {
             let mut conn = Connection::new(
                 &self.rtc_config.api,
@@ -135,6 +129,10 @@ impl Client {
                 remote_node_id,
             )
             .await;
+            conn.register_data_channel().await;
+            conn.init_ice_handler().await;
+            conn.init_remote_handler().await;
+            conn.answer().await;
         }
         Ok(())
     }

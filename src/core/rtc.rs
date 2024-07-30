@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use iroh::net::key::PublicKey;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::task::JoinHandle;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::{
     api::API,
     data_channel::data_channel_message::DataChannelMessage,
@@ -129,24 +130,39 @@ impl Connection {
         Ok(offer)
     }
 
-    pub async fn get_remote(&mut self) {
-        let pc = Arc::clone(&self.peer_connection);
+    //Initializes a listener that receives remote SDPs and ICE candidates
+    pub async fn init_remote_handler(&mut self) -> Result<()> {
         let signaler = Arc::clone(&self.signaler);
         let pc = Arc::clone(&self.peer_connection);
 
+        let (tx, mut rx) = mpsc::channel::<Session>(10);
+        signaler.init(tx.clone()).await;
+
         //Spawn a listener to retreive session from remote
         let handle = tokio::spawn(async move {
-            let notify = &signaler.sdp_notify;
             //Continue listening for incoming sdps incase connection is reset
-            loop {
-                notify.notified().await;
-                let mut rs = signaler.remote_sessions.lock().await;
-                if let Some(sdp) = rs.pop() {
-                    pc.set_remote_description(sdp);
+            while let Some(session) = rx.recv().await {
+                if let Some(sdp) = session.sdp {
+                    if let Err(e) = pc.set_remote_description(sdp).await {
+                        println!("Error setting sdp {e}");
+                    }
+                }
+                if let Some(candidate) = session.ice_candidate {
+                    let c = candidate.to_string();
+                    if let Err(e) = pc
+                        .add_ice_candidate(RTCIceCandidateInit {
+                            candidate: c,
+                            ..Default::default()
+                        })
+                        .await
+                    {
+                        println!("Error adding ice canddiate {e}");
+                    }
                 }
             }
         });
         self.task_handles.push(handle);
+        Ok(())
     }
 
     pub async fn answer(&self) {
