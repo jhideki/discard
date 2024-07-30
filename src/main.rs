@@ -2,6 +2,7 @@ mod utils {
     pub mod constants;
     pub mod debug;
     pub mod enums;
+    pub mod types;
 }
 mod tests {
     pub mod client;

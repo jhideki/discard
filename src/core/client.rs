@@ -1,18 +1,19 @@
 use crate::core::rtc::Connection;
-use crate::core::signal::{Session, SessionExchange};
+use crate::core::signal::{IdExchange, Session, SessionExchange};
 use crate::debug::TEST_ROOT;
+use crate::utils::constants::ID_APLN;
 use crate::utils::{
     constants::{SDP_ALPN, STUN_SERVERS},
     enums::{ConnType, SessionType},
+    types::NodeId,
 };
 
 use anyhow::Result;
-use iroh::net::NodeId;
 use iroh::{
-    base::key::PublicKey,
     blobs::store::fs::Store,
-    node::{self, Builder, Node},
+    node::{Builder, Node},
 };
+use tokio::sync::mpsc;
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
@@ -31,7 +32,7 @@ struct RTCConfig {
 
 //Node information to hand to peer 2 via other means.
 struct UserId {
-    node_id: PublicKey,
+    node_id: NodeId,
 }
 
 pub struct Client {
@@ -52,10 +53,22 @@ impl Client {
             .await
             .expect("Failed to build node");
 
-        let proto = SessionExchange::new(builder.endpoint().clone());
-
+        let session_exchange = SessionExchange::new(builder.endpoint().clone());
+        let id_exchange = IdExchange::new(builder.endpoint().clone());
         let node = builder
-            .accept(SDP_ALPN, proto.clone())
+            .accept(SDP_ALPN, session_exchange.clone())
+            .accept(
+                ID_APLN,
+                id_exchange
+                    .clone()
+                    .clone()
+                    .clone()
+                    .clone()
+                    .clone()
+                    .clone()
+                    .clone()
+                    .clone(),
+            )
             .spawn()
             .await
             .expect("Failed to spawn node");
@@ -88,14 +101,14 @@ impl Client {
         }
     }
 
-    pub async fn init_connection(&self) -> Result<()> {
+    pub async fn init_connection(&mut self, remote_node_id: NodeId) -> Result<()> {
         //TODO: get remote node_id
         let mut conn = Connection::new(
             &self.rtc_config.api,
             self.rtc_config.config.clone(),
             ConnType::Offerer,
             self.session_exchange.clone(),
-            self.node.node_id(), //temp
+            remote_node_id,
         )
         .await;
 
@@ -108,6 +121,25 @@ impl Client {
 
         //Returns handles to worker threads
         let handles = conn.get_task_handles();
+        &self.connections.push(conn);
         Ok(())
+    }
+
+    pub async fn receive_connection(&self) -> Result<()> {
+        if let Some(remote_node_id) = rx.recv().await {
+            let mut conn = Connection::new(
+                &self.rtc_config.api,
+                self.rtc_config.config.clone(),
+                ConnType::Offerer,
+                self.session_exchange.clone(),
+                remote_node_id,
+            )
+            .await;
+        }
+        Ok(())
+    }
+
+    pub fn get_node_id(&self) -> NodeId {
+        self.node.node_id()
     }
 }
