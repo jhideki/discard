@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
 use crate::utils::enums::ConnType;
-pub const TEST_ROOT: &str = "/root";
+pub const TEST_ROOT: &str = "./root";
 
 pub fn get_sdp(conn_type: &ConnType) -> RTCSessionDescription {
     let mut input = String::new();

@@ -7,7 +7,7 @@ pub enum SessionType {
     Call,
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum ConnType {
     Offerer,
     Answerer,

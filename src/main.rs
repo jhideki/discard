@@ -2,8 +2,10 @@ mod utils {
     pub mod constants;
     pub mod debug;
     pub mod enums;
+    pub mod logger;
     pub mod types;
 }
+#[cfg(test)]
 mod tests {
     pub mod client;
 }

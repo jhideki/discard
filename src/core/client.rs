@@ -1,6 +1,5 @@
-use crate::core::rtc::Connection;
+use crate::core::rtc::{APIWrapper, Connection, RTCConfigurationWrapper};
 use crate::core::signal::{IdExchange, Session, SessionExchange};
-use crate::debug::TEST_ROOT;
 use crate::utils::constants::ID_APLN;
 use crate::utils::{
     constants::{SDP_ALPN, STUN_SERVERS},
@@ -14,6 +13,7 @@ use iroh::{
     node::{Builder, Node},
 };
 use tokio::sync::mpsc;
+use tracing::{debug, info, instrument, Span};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
@@ -23,11 +23,13 @@ use webrtc::{
     peer_connection::configuration::RTCConfiguration,
 };
 
+use std::fmt::Debug;
 use std::sync::Arc;
 
+#[derive(Debug)]
 struct RTCConfig {
-    api: webrtc::api::API,
-    config: RTCConfiguration,
+    api: APIWrapper,
+    config: RTCConfigurationWrapper,
 }
 
 //Node information to hand to peer 2 via other means.
@@ -35,6 +37,7 @@ struct UserId {
     node_id: NodeId,
 }
 
+#[derive(Debug)]
 pub struct Client {
     pub connections: Vec<Connection>,
     rtc_config: RTCConfig,
@@ -44,9 +47,9 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new() -> Self {
+    pub async fn new(root: &str) -> Self {
         let builder = Builder::default()
-            .persist(TEST_ROOT)
+            .persist(root)
             .await
             .expect("Failed to create store")
             .disable_docs()
@@ -85,13 +88,17 @@ impl Client {
             .build();
         Client {
             connections: Vec::new(),
-            rtc_config: RTCConfig { api, config },
+            rtc_config: RTCConfig {
+                api: APIWrapper(api),
+                config: RTCConfigurationWrapper(config),
+            },
             node,
             session_exchange,
             id_exchange,
         }
     }
 
+    #[instrument(fields(node_id = self.node.node_id().to_string()))]
     pub async fn init_connection(&mut self, remote_node_id: NodeId) -> Result<()> {
         //TODO: get remote node_id
         let mut conn = Connection::new(
@@ -105,9 +112,13 @@ impl Client {
 
         //Typical WebRTC steps...
         conn.create_data_channel().await;
+        info!("Created data channel!");
         conn.init_ice_handler().await;
-        conn.offer().await;
-        conn.init_remote_handler().await;
+        info!("Listening for ice candidates");
+        conn.offer().await?;
+        info!("Created offer!");
+        conn.init_remote_handler().await?;
+        info!("Listening for remote traffic");
         conn.monitor_connection().await;
 
         //Returns handles to worker threads

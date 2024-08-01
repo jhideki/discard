@@ -28,6 +28,7 @@ pub struct SessionExchange {
 impl ProtocolHandler for SessionExchange {
     fn accept(self: Arc<Self>, conn: iroh::net::endpoint::Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
+            println!("Recieved data from peer");
             //Open a connection to peer
             let connection = conn.await?;
             let mut recv = connection.accept_uni().await?;

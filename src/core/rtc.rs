@@ -19,6 +19,22 @@ use webrtc::{
 
 use std::sync::Arc;
 
+pub struct APIWrapper(pub API);
+impl std::fmt::Debug for APIWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "WebRTC API struct")
+    }
+}
+
+#[derive(Clone)]
+pub struct RTCConfigurationWrapper(pub RTCConfiguration);
+impl std::fmt::Debug for RTCConfigurationWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "WebRTC Config struct")
+    }
+}
+
+#[derive(Debug)]
 pub struct Connection {
     pub peer_connection: Arc<RTCPeerConnection>,
     pub conn_type: ConnType,
@@ -31,12 +47,14 @@ pub struct Connection {
 
 impl Connection {
     pub async fn new(
-        api: &API,
-        config: RTCConfiguration,
+        api: &APIWrapper,
+        config: RTCConfigurationWrapper,
         conn_type: ConnType,
         signaler: Arc<SessionExchange>,
         remote_node_id: PublicKey,
     ) -> Self {
+        let api = &api.0;
+        let config = config.0;
         let peer_connection = api
             .new_peer_connection(config)
             .await
@@ -104,13 +122,15 @@ impl Connection {
                         None => None,
                     };
                     //Send ice candidate and sdp to peer 2
-                    signaler.send_session(
-                        remote_node_id,
-                        Session {
-                            ice_candidate: Some(candidate.clone()),
-                            sdp,
-                        },
-                    );
+                    let _ = signaler
+                        .send_session(
+                            remote_node_id,
+                            Session {
+                                ice_candidate: Some(candidate.clone()),
+                                sdp,
+                            },
+                        )
+                        .await;
                 }
             })
         }));
