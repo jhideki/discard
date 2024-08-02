@@ -12,7 +12,7 @@ use iroh::{
     blobs::store::fs::Store,
     node::{Builder, Node},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, instrument, Span};
 use webrtc::{
     api::{
@@ -30,11 +30,6 @@ use std::sync::Arc;
 struct RTCConfig {
     api: APIWrapper,
     config: RTCConfigurationWrapper,
-}
-
-//Node information to hand to peer 2 via other means.
-struct UserId {
-    node_id: NodeId,
 }
 
 #[derive(Debug)]
@@ -106,6 +101,7 @@ impl Client {
             ConnType::Offerer,
             self.session_exchange.clone(),
             remote_node_id,
+            self.connections.len(),
         )
         .await;
 
@@ -117,6 +113,9 @@ impl Client {
         conn.offer().await?;
         info!("Created offer!");
         conn.init_remote_handler().await?;
+
+        self.send_remote_node_id(remote_node_id).await?;
+
         info!("Listening for remote traffic");
         conn.monitor_connection().await;
 
@@ -152,6 +151,7 @@ impl Client {
                 ConnType::Offerer,
                 self.session_exchange.clone(),
                 remote_node_id,
+                self.connections.len(),
             )
             .await;
             conn.register_data_channel().await;
@@ -159,10 +159,27 @@ impl Client {
             conn.init_remote_handler().await?;
             conn.answer().await;
         }
+
         Ok(())
     }
 
     pub fn get_node_id(&self) -> NodeId {
         self.node.node_id()
+    }
+
+    pub async fn send_message(&self, conn_id: usize, message: String) -> Result<()> {
+        let conn = &self.connections[conn_id];
+        conn.send_dc_message(message).await?;
+        //TODO: write message to db
+
+        Ok(())
+    }
+
+    pub async fn get_message(&self, conn_id: usize) -> Result<String> {
+        let conn = &self.connections[conn_id];
+        if let Some(message) = conn.get_message().await {
+            return Ok(message);
+        }
+        Err(anyhow::anyhow!("No messages in queue!"))
     }
 }

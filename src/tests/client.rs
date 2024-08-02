@@ -16,6 +16,7 @@ async fn test_data_channel() {
     let mut p1 = Client::new(test_paths[0]).await;
     let p2 = Client::new(test_paths[1]).await;
     let node2_id = p2.get_node_id();
+
     //Initiliaze the connection with p2 by sending Session + self.node_id
     if let Err(e) = p1.init_connection(node2_id).await {
         panic!("Error initializing the conn {e}");
@@ -23,6 +24,15 @@ async fn test_data_channel() {
     //Receive conncetion from p1 by listening for new Sessions + p1.node_id
     if let Err(e) = p2.receive_connection().await {
         panic!("Error receiving the conn {e}");
+    }
+    let message = String::from("test message");
+    if let Err(e) = p1.send_message(0, message.clone()).await {
+        panic!("Error sending message {e}");
+    }
+    if let Ok(received_message) = p2.get_message(0).await {
+        assert!(received_message == message, "Messages are not equal");
+    } else {
+        panic!("No message received");
     }
 
     //cleanup

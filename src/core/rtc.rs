@@ -3,10 +3,11 @@ use crate::debug;
 use crate::utils::enums::ConnType;
 use anyhow::{Context, Result};
 use iroh::net::key::PublicKey;
+use std::collections::VecDeque;
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::task::JoinHandle;
 use tracing::{error, info};
-use webrtc::data::data_channel::DataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::{
     api::API,
@@ -18,8 +19,6 @@ use webrtc::{
         sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
 };
-
-use std::sync::Arc;
 
 pub struct APIWrapper(pub API);
 impl std::fmt::Debug for APIWrapper {
@@ -36,6 +35,13 @@ impl std::fmt::Debug for RTCConfigurationWrapper {
     }
 }
 
+pub struct RTCDataChannelWrapper(pub Arc<RTCDataChannel>);
+impl std::fmt::Debug for RTCDataChannelWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RTC Data Channel")
+    }
+}
+
 #[derive(Debug)]
 pub struct Connection {
     pub peer_connection: Arc<RTCPeerConnection>,
@@ -45,7 +51,9 @@ pub struct Connection {
     signaler: Arc<SessionExchange>,
     remote_node_id: PublicKey,
     task_handles: Vec<JoinHandle<()>>,
-    data_channel: Some(DataChannel),
+    data_channel: Option<RTCDataChannelWrapper>,
+    id: usize,
+    message_queue: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl Connection {
@@ -55,6 +63,7 @@ impl Connection {
         conn_type: ConnType,
         signaler: Arc<SessionExchange>,
         remote_node_id: PublicKey,
+        id: usize,
     ) -> Self {
         let api = &api.0;
         let config = config.0;
@@ -71,32 +80,34 @@ impl Connection {
             remote_node_id,
             task_handles: Vec::new(),
             data_channel: None,
+            id,
+            message_queue: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
     pub async fn monitor_connection(&mut self) {
-        let (done_tx, mut done_rx) = mpsc::channel::<()>(1);
+        let (done_tx, mut done_rx) = mpsc::channel::<()>(10);
         let pc = Arc::clone(&self.peer_connection);
         pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
             match s {
-                RTCPeerConnectionState::New => println!("New connection"),
+                RTCPeerConnectionState::New => info!("New connection"),
                 RTCPeerConnectionState::Failed => {
-                    println!("Failed connection");
+                    info!("Failed connection");
                     let _ = done_tx.send(());
                 }
-                RTCPeerConnectionState::Closed => println!("Closed connection"),
-                RTCPeerConnectionState::Connected => println!("Connected!"),
-                RTCPeerConnectionState::Connecting => println!("Connecting..."),
-                RTCPeerConnectionState::Unspecified => println!("Unspecified?"),
-                _ => println!("???"),
+                RTCPeerConnectionState::Closed => info!("Closed connection"),
+                RTCPeerConnectionState::Connected => info!("Connected!"),
+                RTCPeerConnectionState::Connecting => info!("Connecting..."),
+                RTCPeerConnectionState::Unspecified => info!("Unspecified?"),
+                _ => info!("???"),
             }
             Box::pin(async {})
         }));
 
         let handle = tokio::spawn(async move {
             loop {
-                if let signal = done_rx.recv().await {
-                    println!("Conn discconeted");
+                if let _ = done_rx.recv().await {
+                    info!("Conn discconeted");
                     break;
                 }
             }
@@ -167,7 +178,7 @@ impl Connection {
             while let Some(session) = rx.recv().await {
                 if let Some(sdp) = session.sdp {
                     if let Err(e) = pc.set_remote_description(sdp).await {
-                        println!("Error setting sdp {e}");
+                        info!("Error setting sdp {e}");
                     }
                 }
                 if let Some(candidate) = session.ice_candidate {
@@ -179,7 +190,7 @@ impl Connection {
                         })
                         .await
                     {
-                        println!("Error adding ice canddiate {e}");
+                        info!("Error adding ice canddiate {e}");
                     }
                 }
             }
@@ -216,25 +227,27 @@ impl Connection {
         let d_label = data_channel.label().to_owned();
         data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
             let message = String::from_utf8(msg.data.to_vec()).expect("Error parsing message");
-            println!("Message from peer, {}: {}", d_label, message);
+            info!("Message from peer, {}: {}", d_label, message);
             Box::pin(async {})
         }));
-        self.data_channel = Some(data_channel);
+        self.data_channel = Some(RTCDataChannelWrapper(Arc::clone(&data_channel)));
     }
 
     pub async fn register_data_channel(&self) {
         let pc = Arc::clone(&self.peer_connection);
+        let mq = Arc::clone(&self.message_queue);
         pc.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-            println!("Data channel established from answerer");
+            info!("Data channel established from answerer");
             let d2 = Arc::clone(&d);
+            let mq = Arc::clone(&mq);
             Box::pin(async move {
                 d.on_open(Box::new(move || {
-                    println!("Data channel {} {} is now open", d2.label(), d2.id());
+                    info!("Data channel {} {} is now open", d2.label(), d2.id());
                     Box::pin(async move {
-                        println!("Getting message");
+                        info!("Getting message");
                         let message = debug::get_message();
                         if let Err(e) = d2.send_text(message).await {
-                            println!("Error sending message {}", e);
+                            info!("Error sending message {}", e);
                         }
                     })
                 }));
@@ -242,8 +255,13 @@ impl Connection {
                 d.on_message(Box::new(move |msg: DataChannelMessage| {
                     let message =
                         String::from_utf8(msg.data.to_vec()).expect("Error parsing message");
-                    println!("Message from peer: {}", message);
-                    Box::pin(async {})
+                    info!("Message from peer: {}", message);
+
+                    let message_queue = Arc::clone(&mq);
+                    Box::pin(async move {
+                        let mut mq = message_queue.lock().await;
+                        mq.push_back(message);
+                    })
                 }));
             })
         }));
@@ -260,10 +278,20 @@ impl Connection {
         &self.task_handles
     }
 
-    pub async fn send_dc_message(&self, message: String) {
-        if let Some(dc) = self.data_channel {
+    pub async fn send_dc_message(&self, message: String) -> Result<()> {
+        if let Some(dc) = &self.data_channel {
+            let data_channel = dc.0.clone();
+            data_channel.send_text(message).await?;
         } else {
             error!("Data channel has not been set");
         }
+        Ok(())
+    }
+
+    //Gets the most recent message received
+    pub async fn get_message(&self) -> Option<String> {
+        let mq = Arc::clone(&self.message_queue);
+        let mut message_queue = mq.lock().await;
+        message_queue.pop_front()
     }
 }
