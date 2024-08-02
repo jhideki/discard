@@ -5,6 +5,8 @@ use anyhow::{Context, Result};
 use iroh::net::key::PublicKey;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::task::JoinHandle;
+use tracing::{error, info};
+use webrtc::data::data_channel::DataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::{
     api::API,
@@ -43,6 +45,7 @@ pub struct Connection {
     signaler: Arc<SessionExchange>,
     remote_node_id: PublicKey,
     task_handles: Vec<JoinHandle<()>>,
+    data_channel: Some(DataChannel),
 }
 
 impl Connection {
@@ -67,6 +70,7 @@ impl Connection {
             signaler,
             remote_node_id,
             task_handles: Vec::new(),
+            data_channel: None,
         }
     }
 
@@ -91,7 +95,6 @@ impl Connection {
 
         let handle = tokio::spawn(async move {
             loop {
-                println!("Waiting...");
                 if let signal = done_rx.recv().await {
                     println!("Conn discconeted");
                     break;
@@ -197,7 +200,7 @@ impl Connection {
         }
     }
 
-    pub async fn create_data_channel(&self) {
+    pub async fn create_data_channel(&mut self) {
         let pc = Arc::clone(&self.peer_connection);
         let data_channel = pc
             .create_data_channel("messaging", None)
@@ -206,15 +209,8 @@ impl Connection {
 
         let dc = Arc::clone(&data_channel);
         data_channel.on_open(Box::new(move || {
-            println!("Data channel {} {} is now open", dc.label(), dc.id());
-            let dc2 = Arc::clone(&dc);
-            Box::pin(async move {
-                println!("Getting message");
-                let message = debug::get_message();
-                if let Err(e) = dc2.send_text(message).await {
-                    println!("Error sending message {}", e);
-                }
-            })
+            info!("Data channel {} {} is now open", dc.label(), dc.id());
+            Box::pin(async move {})
         }));
 
         let d_label = data_channel.label().to_owned();
@@ -223,6 +219,7 @@ impl Connection {
             println!("Message from peer, {}: {}", d_label, message);
             Box::pin(async {})
         }));
+        self.data_channel = Some(data_channel);
     }
 
     pub async fn register_data_channel(&self) {
@@ -261,5 +258,12 @@ impl Connection {
     //TODO: Update handles to be a tuple of task_type, handle
     pub fn get_task_handles(&self) -> &Vec<JoinHandle<()>> {
         &self.task_handles
+    }
+
+    pub async fn send_dc_message(&self, message: String) {
+        if let Some(dc) = self.data_channel {
+        } else {
+            error!("Data channel has not been set");
+        }
     }
 }

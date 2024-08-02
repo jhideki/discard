@@ -98,9 +98,8 @@ impl Client {
         }
     }
 
-    #[instrument(fields(node_id = self.node.node_id().to_string()))]
+    #[instrument(skip(self),fields(node_id = self.node.node_id().to_string()))]
     pub async fn init_connection(&mut self, remote_node_id: NodeId) -> Result<()> {
-        //TODO: get remote node_id
         let mut conn = Connection::new(
             &self.rtc_config.api,
             self.rtc_config.config.clone(),
@@ -127,11 +126,26 @@ impl Client {
         Ok(())
     }
 
-    pub async fn receive_connection(&self) -> Result<()> {
+    #[instrument(skip(self),fields(node_id = self.node.node_id().to_string()))]
+    pub async fn send_remote_node_id(&self, remote_node_id: NodeId) -> Result<()> {
+        self.id_exchange.send_node_id(remote_node_id).await?;
+        Ok(())
+    }
+
+    #[instrument(skip(self),fields(node_id = self.node.node_id().to_string()))]
+    pub async fn get_remote_node_id(&self) -> Result<NodeId> {
         let (tx, mut rx) = mpsc::channel(10);
         let id_exchange = self.id_exchange.clone();
         id_exchange.init(tx.clone()).await;
+
         if let Some(remote_node_id) = rx.recv().await {
+            return Ok(remote_node_id);
+        }
+        Err(anyhow::anyhow!("Error retreiving remote node id"))
+    }
+
+    pub async fn receive_connection(&self) -> Result<()> {
+        if let Ok(remote_node_id) = self.get_remote_node_id().await {
             let mut conn = Connection::new(
                 &self.rtc_config.api,
                 self.rtc_config.config.clone(),
@@ -142,7 +156,7 @@ impl Client {
             .await;
             conn.register_data_channel().await;
             conn.init_ice_handler().await;
-            conn.init_remote_handler().await;
+            conn.init_remote_handler().await?;
             conn.answer().await;
         }
         Ok(())

@@ -1,21 +1,20 @@
-use std::path::{self, PathBuf};
+use std::path::PathBuf;
 
 use tokio::fs;
-use tracing::{debug, info, warn};
-use tracing_test::traced_test;
+use tracing::{info, warn};
 
 use crate::core::client::Client;
-const TEST_PATHS: [&str; 2] = ["./test-root1", "./test-root2"];
+use crate::utils::logger;
+
 //Create two clients and test sdp exchange via sending store bytes from iroh
-/*#[tokio::test]
-#[traced_test]
-async fn test_connection() {
-    info!("TEST");
-    remove_test_paths();
-    let mut p1 = Client::new(TEST_PATHS[0]).await;
-    info!("Created client 1");
-    let p2 = Client::new(TEST_PATHS[1]).await;
-    info!("Created client 2");
+#[tokio::test]
+async fn test_data_channel() {
+    logger::init_tracing();
+    let test_paths = vec!["./test-root1", "./test-root2"];
+    remove_test_paths(&test_paths).await;
+
+    let mut p1 = Client::new(test_paths[0]).await;
+    let p2 = Client::new(test_paths[1]).await;
     let node2_id = p2.get_node_id();
     //Initiliaze the connection with p2 by sending Session + self.node_id
     if let Err(e) = p1.init_connection(node2_id).await {
@@ -25,18 +24,41 @@ async fn test_connection() {
     if let Err(e) = p2.receive_connection().await {
         panic!("Error receiving the conn {e}");
     }
-}*/
 
-#[tokio::test]
-#[traced_test]
-async fn test_client_creation() {
-    remove_test_paths().await;
-    let client = Client::new(TEST_PATHS[0]).await;
-    info!("Created Client {}", client.get_node_id());
+    //cleanup
+    remove_test_paths(&test_paths).await;
 }
 
-async fn remove_test_paths() {
-    for path in TEST_PATHS {
+#[tokio::test]
+async fn test_node_id_exchange() {
+    logger::init_tracing();
+    let test_paths = vec!["./test-root3", "./test-root4"];
+    remove_test_paths(&test_paths).await;
+    info!("Removed test paths");
+
+    let p1 = Client::new(test_paths[0]).await;
+    let p2 = Client::new(test_paths[1]).await;
+    let node2_id = p2.get_node_id();
+    let node1_id = p1.get_node_id().clone();
+
+    //Set up listner
+    tokio::spawn(async move {
+        if let Ok(recieved_id) = p2.get_remote_node_id().await {
+            assert!(
+                recieved_id.fmt_short() == node1_id.fmt_short(),
+                "Node ids do not match"
+            );
+        }
+    });
+
+    let _ = p1.send_remote_node_id(node2_id).await;
+
+    //cleanup
+    remove_test_paths(&test_paths).await;
+}
+
+async fn remove_test_paths(test_paths: &Vec<&str>) {
+    for path in test_paths {
         if PathBuf::from(path).exists() {
             match fs::remove_dir_all(path).await {
                 Ok(_) => info!("Removed test path: {:?}", path),

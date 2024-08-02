@@ -1,10 +1,8 @@
-use crate::utils::types::NodeId;
-use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*};
-pub fn init_tracing(level_filter: LevelFilter) {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(level_filter)
-        .init();
-}
+use std::{env, io};
 
-//TODO: Setup other modules??
+use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, EnvFilter};
+pub fn init_tracing() {
+    let filter = EnvFilter::new("discard=debug");
+    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+}
