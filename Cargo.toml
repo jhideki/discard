@@ -19,5 +19,3 @@ tracing = {version = "0.1.40", feaatures = ["attributes"]}
 tracing-appender = "0.2.3"
 tracing-subscriber = "0.3"
 
-[dev-dependencies]
-tracing-test = "0.2"

@@ -16,8 +16,8 @@ mod core {
     pub mod signal;
 }
 mod db {
-    pub mod data;
     pub mod db;
+    pub mod models;
 }
 use clap::{Arg, Command};
 use core::client;

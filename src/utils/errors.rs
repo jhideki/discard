@@ -15,9 +15,3 @@ impl fmt::Display for TimeoutError {
         )
     }
 }
-
-impl From<TimeoutError> for anyhow::Error {
-    fn from(error: TimeoutError) -> Self {
-        anyhow::Error::new(error)
-    }
-}
