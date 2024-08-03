@@ -105,12 +105,8 @@ impl Connection {
         }));
 
         let handle = tokio::spawn(async move {
-            loop {
-                if let _ = done_rx.recv().await {
-                    info!("Conn discconeted");
-                    break;
-                }
-            }
+            done_rx.recv().await;
+            info!("Conn discconeted");
         });
         self.task_handles.push(handle);
     }
@@ -174,12 +170,14 @@ impl Connection {
 
         //Spawn a listener to retreive session from remote
         let handle = tokio::spawn(async move {
+            info!("Listening for remote respons");
             //Continue listening for incoming sdps incase connection is reset
             while let Some(session) = rx.recv().await {
                 if let Some(sdp) = session.sdp {
                     if let Err(e) = pc.set_remote_description(sdp).await {
-                        info!("Error setting sdp {e}");
+                        error!("Error setting sdp {e}");
                     }
+                    info!("Set remote sdp");
                 }
                 if let Some(candidate) = session.ice_candidate {
                     let c = candidate.to_string();
@@ -192,6 +190,7 @@ impl Connection {
                     {
                         info!("Error adding ice canddiate {e}");
                     }
+                    info!("Set ice candidate");
                 }
             }
         });

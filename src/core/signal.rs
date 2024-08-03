@@ -4,7 +4,7 @@ use iroh::node::ProtocolHandler;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -66,9 +66,11 @@ impl SessionExchange {
     pub async fn send_session(&self, node_id: NodeId, session: Session) -> Result<()> {
         let conn = &self.endpoint.connect_by_node_id(node_id, SDP_ALPN).await?;
         let mut send = conn.open_uni().await?;
+        debug!("Opened channel");
         let bytes = bincode::serialize(&session)?;
         send.write_all(&bytes).await?;
         send.finish().await?;
+        debug!("Sent session");
         Ok(())
     }
 }
@@ -109,8 +111,10 @@ impl IdExchange {
     pub async fn init(&self, sender: mpsc::Sender<NodeId>) {
         let mut tx = self.tx.lock().await;
         *tx = Some(sender);
+        info!("channel initialized");
     }
     pub async fn send_node_id(&self, node_id: NodeId) -> Result<()> {
+        debug!("Inside send_node_id in signal.rs");
         let self_node_id = &self.endpoint.node_id().fmt_short();
         debug!("Trying to open connection... {}", self_node_id);
         let conn = &self.endpoint.connect_by_node_id(node_id, ID_APLN).await?;

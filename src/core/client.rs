@@ -1,9 +1,9 @@
 use crate::core::rtc::{APIWrapper, Connection, RTCConfigurationWrapper};
-use crate::core::signal::{IdExchange, Session, SessionExchange};
+use crate::core::signal::{IdExchange, SessionExchange};
 use crate::utils::constants::ID_APLN;
 use crate::utils::{
-    constants::{SDP_ALPN, STUN_SERVERS},
-    enums::{ConnType, SessionType},
+    constants::{SDP_ALPN, SEND_NODE_ID_DELAY, SEND_NODE_ID_TIMEOUT, STUN_SERVERS},
+    enums::ConnType,
     types::NodeId,
 };
 
@@ -13,7 +13,8 @@ use iroh::{
     node::{Builder, Node},
 };
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, info, instrument, Span};
+use tokio::time::{sleep, timeout, Duration};
+use tracing::{debug, error, info, instrument, Span};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
@@ -93,7 +94,7 @@ impl Client {
         }
     }
 
-    #[instrument(skip(self),fields(node_id = self.node.node_id().to_string()))]
+    #[instrument(skip_all,fields(node_id = self.get_node_id_fmt()))]
     pub async fn init_connection(&mut self, remote_node_id: NodeId) -> Result<()> {
         let mut conn = Connection::new(
             &self.rtc_config.api,
@@ -112,9 +113,15 @@ impl Client {
         info!("Listening for ice candidates");
         conn.offer().await?;
         info!("Created offer!");
-        conn.init_remote_handler().await?;
+        match conn.init_remote_handler().await {
+            Ok(()) => info!("Succesfully created remote handler"),
+            Err(e) => error!("Error creating remote handler {}", e),
+        }
 
-        self.send_remote_node_id(remote_node_id).await?;
+        match self.send_remote_node_id(remote_node_id).await {
+            Ok(()) => info!("Succesfully sent our node id to remote"),
+            Err(e) => error!("Error sending our node id {}", e),
+        };
 
         info!("Listening for remote traffic");
         conn.monitor_connection().await;
@@ -125,25 +132,43 @@ impl Client {
         Ok(())
     }
 
-    #[instrument(skip(self),fields(node_id = self.node.node_id().to_string()))]
+    #[instrument(skip_all,fields(node_id = self.node.node_id().to_string()))]
     pub async fn send_remote_node_id(&self, remote_node_id: NodeId) -> Result<()> {
-        self.id_exchange.send_node_id(remote_node_id).await?;
-        Ok(())
+        match timeout(Duration::from_secs(SEND_NODE_ID_TIMEOUT), async {
+            loop {
+                match self.id_exchange.send_node_id(remote_node_id).await {
+                    Ok(()) => return Ok(()),
+                    Err(e) => {
+                        error!("Error sending our node id, trying again... Err Msg: {}", e);
+                        sleep(Duration::from_secs(SEND_NODE_ID_DELAY)).await;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => Err(anyhow::anyhow!("Error retreiving remote node id {}", e)),
+        }
     }
 
-    #[instrument(skip(self),fields(node_id = self.node.node_id().to_string()))]
+    #[instrument(skip_all,fields(node_id = self.get_node_id_fmt()))]
     pub async fn get_remote_node_id(&self) -> Result<NodeId> {
         let (tx, mut rx) = mpsc::channel(10);
         let id_exchange = self.id_exchange.clone();
         id_exchange.init(tx.clone()).await;
+        info!("initialized id exchange");
 
         if let Some(remote_node_id) = rx.recv().await {
+            info!("Recieved remote node id");
             return Ok(remote_node_id);
         }
         Err(anyhow::anyhow!("Error retreiving remote node id"))
     }
 
+    #[instrument(skip_all,fields(node_id = self.get_node_id_fmt()))]
     pub async fn receive_connection(&self) -> Result<()> {
+        info!("Waiting for remote node id");
         if let Ok(remote_node_id) = self.get_remote_node_id().await {
             let mut conn = Connection::new(
                 &self.rtc_config.api,
@@ -165,6 +190,11 @@ impl Client {
 
     pub fn get_node_id(&self) -> NodeId {
         self.node.node_id()
+    }
+
+    fn get_node_id_fmt(&self) -> String {
+        let node_id = self.node.node_id().fmt_short();
+        node_id.clone()
     }
 
     pub async fn send_message(&self, conn_id: usize, message: String) -> Result<()> {
