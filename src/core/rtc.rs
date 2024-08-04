@@ -1,5 +1,4 @@
 use crate::core::signal::{Session, SessionExchange};
-use crate::debug;
 use crate::utils::enums::ConnType;
 use anyhow::{Context, Result};
 use iroh::net::key::PublicKey;
@@ -242,13 +241,7 @@ impl Connection {
             Box::pin(async move {
                 d.on_open(Box::new(move || {
                     info!("Data channel {} {} is now open", d2.label(), d2.id());
-                    Box::pin(async move {
-                        info!("Getting message");
-                        let message = debug::get_message();
-                        if let Err(e) = d2.send_text(message).await {
-                            info!("Error sending message {}", e);
-                        }
-                    })
+                    Box::pin(async move {})
                 }));
 
                 d.on_message(Box::new(move |msg: DataChannelMessage| {

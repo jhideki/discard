@@ -11,8 +11,13 @@ pub fn init_tracing() {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
+pub fn init_tracing_no_filt() {
+    let subscriber = tracing_subscriber::fmt().compact().with_file(true).finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+}
+
 pub fn init_signal_file_trace() {
-    let filter = EnvFilter::new("discard::core::signal=debug,discard::tests::client=debug");
+    let filter = EnvFilter::new("discard::core::signal=debug,tests=debug");
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .compact()

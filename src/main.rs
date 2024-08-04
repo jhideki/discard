@@ -6,16 +6,12 @@ mod utils {
     pub mod logger;
     pub mod types;
 }
-#[cfg(test)]
-mod tests {
-    pub mod client;
-}
 mod core {
     pub mod client;
     pub mod rtc;
     pub mod signal;
 }
-mod db {
+mod database {
     pub mod db;
     pub mod models;
 }
