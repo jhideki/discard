@@ -23,7 +23,7 @@ impl FromRow for User {
     type Model = User;
     fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         Ok(Self {
-            user_id: row.get("id")?,
+            user_id: row.get("user_id")?,
             display_name: row.get("display_name")?,
             node_id: row.get("node_id")?,
         })
@@ -33,13 +33,13 @@ impl FromRow for User {
 impl ToSqlStatement for User {
     fn to_sql(&self) -> Vec<(&str, String)> {
         vec![
-            ("id", self.user_id.to_string()),
+            ("user_id", self.user_id.to_string()),
             ("display_name", self.display_name.clone()),
             ("node_id", self.node_id.to_string()),
         ]
     }
     fn table_name() -> &'static str {
-        "user"
+        "users"
     }
 }
 
@@ -54,9 +54,9 @@ impl FromRow for Message {
     type Model = Message;
     fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
         Ok(Self {
-            message_id: row.get("id")?,
+            message_id: row.get("message_id")?,
             content: row.get("content")?,
-            sender_id: row.get("display_name")?,
+            sender_id: row.get("sender_id")?,
         })
     }
 }
@@ -64,12 +64,12 @@ impl FromRow for Message {
 impl ToSqlStatement for Message {
     fn to_sql(&self) -> Vec<(&str, String)> {
         vec![
-            ("id", self.message_id.to_string()),
-            ("display_name", self.content.clone()),
+            ("message_id", self.message_id.to_string()),
+            ("content", self.content.clone()),
             ("sender_id", self.sender_id.to_string()),
         ]
     }
     fn table_name() -> &'static str {
-        "message"
+        "messages"
     }
 }
