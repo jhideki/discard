@@ -1,9 +1,10 @@
 use anyhow::Result;
+use iroh::net::endpoint::get_remote_node_id;
 use iroh::net::Endpoint;
 use iroh::node::ProtocolHandler;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -19,25 +20,36 @@ pub struct Session {
 }
 
 //Used to send SDP and ICE candidates to peer
+//TODO: maybe change mpsc to a oneshot channel? May need to rework this design.
 #[derive(Debug)]
 pub struct SessionExchange {
     endpoint: Endpoint,
     max_size: usize,
-    tx: Mutex<Option<mpsc::Sender<Session>>>,
+    session_tx: Mutex<Option<mpsc::Sender<Session>>>,
+    node_id_tx: Mutex<Option<mpsc::Sender<NodeId>>>,
 }
 
 impl ProtocolHandler for SessionExchange {
     fn accept(self: Arc<Self>, conn: iroh::net::endpoint::Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
-            debug!("Recieved data from peer");
             //Open a connection to peer
             let connection = conn.await?;
-            let mut recv = connection.accept_uni().await?;
+
+            let (mut _send, mut recv) = connection.accept_bi().await?;
+
+            //Set remote node id
+            let remote_node_id = get_remote_node_id(&connection)?;
+            let tx = self.node_id_tx.lock().await;
+            if let Some(tx) = tx.as_ref() {
+                tx.send(remote_node_id).await?;
+            }
+
+            //Read session info
             let bytes = recv.read_to_end(self.max_size).await?;
             let remote_session = bincode::deserialize(&bytes)?;
 
             //Notify that sdp/ice candidate has been found to signal client struct
-            let tx = self.tx.lock().await;
+            let tx = self.session_tx.lock().await;
             if let Some(tx) = tx.as_ref() {
                 tx.send(remote_session).await?;
             }
@@ -53,76 +65,28 @@ impl SessionExchange {
         Arc::new(Self {
             endpoint,
             max_size,
-            tx: Mutex::new(None),
+            session_tx: Mutex::new(None),
+            node_id_tx: Mutex::new(None),
         })
     }
 
     //Used to set the channel to Some() value
-    pub async fn init(&self, sender: mpsc::Sender<Session>) {
-        let mut tx = self.tx.lock().await;
-        *tx = Some(sender);
+    pub async fn init_session_sender(&self, session_sender: mpsc::Sender<Session>) {
+        let mut tx = self.session_tx.lock().await;
+        *tx = Some(session_sender);
+    }
+
+    //Used to set the channel to Some() value
+    pub async fn init_id_sender(&self, id_sender: mpsc::Sender<NodeId>) {
+        let mut tx = self.node_id_tx.lock().await;
+        *tx = Some(id_sender);
     }
 
     pub async fn send_session(&self, node_id: NodeId, session: Session) -> Result<()> {
         let conn = &self.endpoint.connect_by_node_id(node_id, SDP_ALPN).await?;
-        let mut send = conn.open_uni().await?;
-        debug!("Opened channel");
+        let (mut send, _recv) = conn.open_bi().await?;
         let bytes = bincode::serialize(&session)?;
         send.write_all(&bytes).await?;
-        send.finish().await?;
-        debug!("Sent session");
-        Ok(())
-    }
-}
-
-//Used to send node_id to peer
-#[derive(Debug)]
-pub struct IdExchange {
-    endpoint: Endpoint,
-    tx: Mutex<Option<mpsc::Sender<NodeId>>>,
-}
-impl ProtocolHandler for IdExchange {
-    fn accept(self: Arc<Self>, conn: iroh::net::endpoint::Connecting) -> BoxedFuture<Result<()>> {
-        debug!("Inside accept");
-        Box::pin(async move {
-            let connection = conn.await?;
-            debug!("Connection received!");
-            let mut recv = connection.accept_uni().await?;
-            let mut buf: Vec<u8> = Vec::new();
-            if let Some(_) = recv.read(&mut buf).await? {
-                if let Ok(node_id) = bincode::deserialize::<NodeId>(&buf) {
-                    let tx = self.tx.lock().await;
-                    if let Some(tx) = tx.as_ref() {
-                        tx.send(node_id).await?;
-                    }
-                }
-            }
-            Ok(())
-        })
-    }
-}
-impl IdExchange {
-    pub fn new(endpoint: Endpoint) -> Arc<Self> {
-        Arc::new(Self {
-            endpoint,
-            tx: Mutex::new(None),
-        })
-    }
-    pub async fn init(&self, sender: mpsc::Sender<NodeId>) {
-        let mut tx = self.tx.lock().await;
-        *tx = Some(sender);
-        info!("channel initialized");
-    }
-    pub async fn send_node_id(&self, node_id: NodeId) -> Result<()> {
-        debug!("Inside send_node_id in signal.rs");
-        let self_node_id = &self.endpoint.node_id().fmt_short();
-        debug!("Trying to open connection... {}", self_node_id);
-        let conn = &self.endpoint.connect_by_node_id(node_id, ID_APLN).await?;
-        let mut send = conn.open_uni().await?;
-        debug!("Connection Opened");
-        let bytes = bincode::serialize(&self.endpoint.node_id())?;
-        send.write_all(&bytes).await?;
-        info!("Data sent!");
         send.finish().await?;
         Ok(())
     }

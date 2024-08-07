@@ -1,11 +1,14 @@
 use crate::core::signal::{Session, SessionExchange};
+use crate::utils::constants::{SEND_SESSION_DELAY, SEND_SESSION_TIMEOUT};
 use crate::utils::enums::ConnType;
+
 use anyhow::{Context, Result};
-use iroh::net::key::PublicKey;
+use iroh::net::NodeId;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::task::JoinHandle;
+use tokio::time::{sleep, timeout, Duration};
 use tracing::{error, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::{
@@ -46,13 +49,13 @@ pub struct Connection {
     pub peer_connection: Arc<RTCPeerConnection>,
     pub conn_type: ConnType,
     candidates: Arc<Mutex<Vec<RTCIceCandidate>>>,
-    pub ice_notify: Arc<Notify>,
+    sdp_notify: Arc<Notify>,
     signaler: Arc<SessionExchange>,
-    remote_node_id: PublicKey,
     task_handles: Vec<JoinHandle<()>>,
     data_channel: Option<RTCDataChannelWrapper>,
     id: usize,
     message_queue: Arc<Mutex<VecDeque<String>>>,
+    remote_node_id: Arc<Mutex<Option<NodeId>>>,
 }
 
 impl Connection {
@@ -61,7 +64,6 @@ impl Connection {
         config: RTCConfigurationWrapper,
         conn_type: ConnType,
         signaler: Arc<SessionExchange>,
-        remote_node_id: PublicKey,
         id: usize,
     ) -> Self {
         let api = &api.0;
@@ -74,40 +76,55 @@ impl Connection {
             peer_connection: Arc::new(peer_connection),
             conn_type,
             candidates: Arc::new(Mutex::new(Vec::new())),
-            ice_notify: Arc::new(Notify::new()),
+            sdp_notify: Arc::new(Notify::new()),
             signaler,
-            remote_node_id,
             task_handles: Vec::new(),
             data_channel: None,
             id,
             message_queue: Arc::new(Mutex::new(VecDeque::new())),
+            remote_node_id: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub async fn monitor_connection(&mut self) {
-        let (done_tx, mut done_rx) = mpsc::channel::<()>(10);
+    pub async fn monitor_connection(&mut self, tx: mpsc::Sender<RTCPeerConnectionState>) {
+        let (tx, mut rx) = mpsc::channel(1);
         let pc = Arc::clone(&self.peer_connection);
         pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
             match s {
-                RTCPeerConnectionState::New => info!("New connection"),
+                RTCPeerConnectionState::New => {
+                    info!("New connection!");
+                    tx.send(RTCPeerConnectionState::New);
+                }
                 RTCPeerConnectionState::Failed => {
                     info!("Failed connection");
-                    let _ = done_tx.send(());
+                    tx.send(RTCPeerConnectionState::Failed);
                 }
-                RTCPeerConnectionState::Closed => info!("Closed connection"),
-                RTCPeerConnectionState::Connected => info!("Connected!"),
-                RTCPeerConnectionState::Connecting => info!("Connecting..."),
-                RTCPeerConnectionState::Unspecified => info!("Unspecified?"),
+                RTCPeerConnectionState::Closed => {
+                    info!("Closed connection");
+                    tx.send(RTCPeerConnectionState::Closed);
+                }
+                RTCPeerConnectionState::Connected => {
+                    info!("Connected!");
+                    tx.send(RTCPeerConnectionState::Connected);
+                }
+                RTCPeerConnectionState::Connecting => {
+                    info!("Connecting...");
+                    tx.send(RTCPeerConnectionState::Connected);
+                }
+                RTCPeerConnectionState::Unspecified => {
+                    info!("Unspecified?");
+                    tx.send(RTCPeerConnectionState::Unspecified);
+                }
                 _ => info!("???"),
             }
             Box::pin(async {})
         }));
 
-        let handle = tokio::spawn(async move {
-            done_rx.recv().await;
-            info!("Conn discconeted");
-        });
-        self.task_handles.push(handle);
+        while let Some(state) = rx.recv().await {
+            if state == RTCPeerConnectionState::Connected {
+                break;
+            }
+        }
     }
 
     pub async fn init_ice_handler(&self) {
@@ -115,12 +132,13 @@ impl Connection {
         let pc = Arc::clone(&self.peer_connection);
         let signaler = Arc::clone(&self.signaler);
         let pc2 = Arc::downgrade(&self.peer_connection);
-        let remote_node_id = self.remote_node_id.clone();
+        let remote_node_id = Arc::clone(&self.remote_node_id);
 
         pc.on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
             let candidates = Arc::clone(&candidates);
             let pc = pc2.clone();
             let signaler = Arc::clone(&signaler);
+            let remote_node_id = Arc::clone(&remote_node_id);
 
             Box::pin(async move {
                 if let Some(candidate) = c {
@@ -130,53 +148,108 @@ impl Connection {
                         Some(pc) => pc.local_description().await,
                         None => None,
                     };
-                    //Send ice candidate and sdp to peer 2
-                    let _ = signaler
-                        .send_session(
-                            remote_node_id,
-                            Session {
-                                ice_candidate: Some(candidate.clone()),
-                                sdp,
-                            },
-                        )
-                        .await;
+                    if let Some(remote_node_id) = remote_node_id.lock().await.as_ref() {
+                        //Send ice candidate and sdp to peer 2
+                        let _ = signaler
+                            .send_session(
+                                *remote_node_id,
+                                Session {
+                                    ice_candidate: Some(candidate.clone()),
+                                    sdp,
+                                },
+                            )
+                            .await;
+                    }
                 }
             })
         }));
     }
 
-    pub async fn offer(&self) -> Result<RTCSessionDescription> {
+    pub async fn get_remote_node_id(&self) -> Result<()> {
+        let signaler = Arc::clone(&self.signaler);
+
+        //Retrieve remote node id so we can send back our ice candidatse + sdps
+        let (tx, mut rx) = mpsc::channel(1);
+        signaler.init_id_sender(tx.clone()).await;
+        let remote_node_id = rx.recv().await.expect("Failed to retreive remote node id");
+
+        let mut gaurd = self.remote_node_id.lock().await;
+        *gaurd = Some(remote_node_id);
+
+        Ok(())
+    }
+
+    pub async fn set_remote_node_id(&self, remote_node_id: NodeId) -> Result<()> {
+        let mut gaurd = self.remote_node_id.lock().await;
+        *gaurd = Some(remote_node_id);
+        Ok(())
+    }
+
+    //Initiates the webrtc handshake by using the signaler to send the remote peer our sdp
+    pub async fn offer(&self) -> Result<()> {
         let pc = Arc::clone(&self.peer_connection);
+        let signaler = Arc::clone(&self.signaler);
+        let remote_node_id = Arc::clone(&self.remote_node_id);
+
         let offer = pc.create_offer(None).await.expect("Error creating offer");
 
         if let Err(e) = pc.set_local_description(offer).await {
             panic!("Error setting local offer {}", e);
         }
+
         let offer = pc
             .local_description()
             .await
             .context("Failed to retreive local sdp from offerer")?;
-        Ok(offer)
+
+        if let Some(remote_node_id) = remote_node_id.lock().await.as_ref() {
+            match timeout(Duration::from_secs(SEND_SESSION_TIMEOUT), async {
+                loop {
+                    let session = Session {
+                        sdp: Some(offer.clone()),
+                        ice_candidate: None,
+                    };
+                    match signaler.send_session(*remote_node_id, session).await {
+                        Ok(()) => return Ok(()),
+                        Err(e) => {
+                            error!("Error sending our answer, trying again... Err Msg: {}", e);
+                            sleep(Duration::from_secs(SEND_SESSION_DELAY)).await;
+                        }
+                    }
+                }
+            })
+            .await
+            {
+                Ok(result) => {
+                    info!("Successfuly sent our answer.");
+                    return result;
+                }
+                Err(e) => return Err(anyhow::anyhow!("Error sending our offer {}", e)),
+            };
+        }
+        Err(anyhow::anyhow!("Failed to send our sdp"))
     }
 
     //Initializes a listener that receives remote SDPs and ICE candidates
     pub async fn init_remote_handler(&mut self) -> Result<()> {
         let signaler = Arc::clone(&self.signaler);
         let pc = Arc::clone(&self.peer_connection);
+        let notify = Arc::clone(&self.sdp_notify);
 
-        let (tx, mut rx) = mpsc::channel::<Session>(10);
-        signaler.init(tx.clone()).await;
+        let (tx, mut rx) = mpsc::channel::<Session>(1);
+        signaler.init_session_sender(tx.clone()).await;
 
         //Spawn a listener to retreive session from remote
         let handle = tokio::spawn(async move {
-            info!("Listening for remote respons");
+            info!("Listening for remote response");
             //Continue listening for incoming sdps incase connection is reset
             while let Some(session) = rx.recv().await {
+                info!("Recieved session from peer");
                 if let Some(sdp) = session.sdp {
                     if let Err(e) = pc.set_remote_description(sdp).await {
                         error!("Error setting sdp {e}");
                     }
-                    info!("Set remote sdp");
+                    notify.notify_waiters();
                 }
                 if let Some(candidate) = session.ice_candidate {
                     let c = candidate.to_string();
@@ -187,7 +260,7 @@ impl Connection {
                         })
                         .await
                     {
-                        info!("Error adding ice canddiate {e}");
+                        error!("Error adding ice canddiate {e}");
                     }
                     info!("Set ice candidate");
                 }
@@ -197,16 +270,32 @@ impl Connection {
         Ok(())
     }
 
-    pub async fn answer(&self) {
+    pub async fn answer(&self) -> Result<()> {
         let pc = Arc::clone(&self.peer_connection);
+        let remote_node_id = Arc::clone(&self.remote_node_id);
+        let signaler = Arc::clone(&self.signaler);
+        let notify = Arc::clone(&self.sdp_notify);
+
+        //Ensure that we recieved remote sdp before creating a response
+        notify.notified().await;
+
         let answer: RTCSessionDescription = pc
             .create_answer(None)
             .await
             .expect("Failed to create answer");
 
-        if let Err(e) = pc.set_local_description(answer).await {
+        if let Err(e) = pc.set_local_description(answer.clone()).await {
             panic!("Error setting local desc: {}", e);
         }
+
+        if let Some(remote_node_id) = remote_node_id.lock().await.as_ref() {
+            let session = Session {
+                sdp: Some(answer),
+                ice_candidate: None,
+            };
+            signaler.send_session(*remote_node_id, session).await?;
+        }
+        Ok(())
     }
 
     pub async fn create_data_channel(&mut self) {

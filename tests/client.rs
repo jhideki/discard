@@ -9,7 +9,7 @@ use utils::Cleanup;
 //Create two clients and test sdp exchange via sending store bytes from iroh
 #[tokio::test]
 async fn test_data_channel() {
-    logger::init_signal_file_trace();
+    logger::init_tracing();
     let test_paths = vec!["./test-root1", "./test-root2"];
 
     //Will remove test paths again at the end of the test
@@ -25,54 +25,38 @@ async fn test_data_channel() {
     let message2 = message.clone();
 
     //Receive conncetion from p1 by listening for new Sessions + p1.node_id
-    tokio::spawn(async move {
-        if let Err(e) = p2.receive_connection().await {
-            error!("Error receiving the conn {e}");
-        }
+    let handle = tokio::spawn(async move {
+        let result = p2.receive_connection().await;
+
+        assert!(result
+            .map_err(|e| println!("Failed recieve connection:  {}", e))
+            .is_ok());
 
         let result = p2.get_message(0).await;
-        assert!(result.is_ok());
-        if let Ok(received_message) = result {
-            info!("Message: {}", received_message);
-            assert!(received_message == message2, "Messages are not equal");
-        } else {
-            error!("No message received");
-        }
+        assert!(result
+            .map(|received_message| {
+                info!("Message: {}", received_message);
+
+                assert!(received_message == message2, "Messages are not equal");
+                true
+            })
+            .map_err(|e| println!("Failed to get message: {}", e))
+            .unwrap_or(false))
     });
 
     //Initiliaze the connection with p2 by sending Session + self.node_id
-    if let Err(e) = p1.init_connection(node2_id).await {
-        error!("Error initializing the conn {e}");
-    };
+    let result = p1.init_connection(node2_id).await;
+    assert!(result
+        .map_err(|e| println!("Failed initiliaze connection:  {}", e))
+        .is_ok());
+
     let result = p1.send_message(0, message.clone()).await;
-    assert!(result.is_ok());
-}
+    assert!(result
+        .map_err(|e| println!("Failed to send message: {}", e))
+        .is_ok());
 
-#[tokio::test]
-async fn test_node_id_exchange() {
-    logger::init_tracing();
-    let test_paths = vec!["./test-root3", "./test-root4"];
-
-    //Will remove test paths again at the end of the test
-    let cleanup = Cleanup {
-        test_paths: &test_paths,
-    };
-    cleanup.remove_test_paths();
-
-    let p1 = Client::new(test_paths[0]).await;
-    let p2 = Client::new(test_paths[1]).await;
-    let node2_id = p2.get_node_id();
-    let node1_id = p1.get_node_id().clone();
-
-    //Set up listner
-    tokio::spawn(async move {
-        if let Ok(recieved_id) = p2.get_remote_node_id().await {
-            assert!(
-                recieved_id.fmt_short() == node1_id.fmt_short(),
-                "Node ids do not match"
-            );
-        }
-    });
-
-    let _ = p1.send_remote_node_id(node2_id).await;
+    let result = handle.await;
+    assert!(result
+        .map_err(|e| println!("Failed to jion handle: {}", e))
+        .is_ok());
 }
