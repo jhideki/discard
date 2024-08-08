@@ -104,7 +104,7 @@ impl Client {
         conn.set_remote_node_id(remote_node_id).await?;
 
         //Typical WebRTC steps...
-        conn.create_data_channel().await;
+        let rx = conn.create_data_channel().await;
         info!("Created data channel!");
         conn.init_ice_handler().await;
         info!("Listening for ice candidates");
@@ -115,22 +115,18 @@ impl Client {
             Err(e) => error!("Error creating remote handler {}", e),
         }
 
-        let (tx, mut rx) = mpsc::channel(1);
-        conn.monitor_connection(tx.clone()).await;
-        while let Some(state) = rx.recv().await {
-            if state == RTCPeerConnectionState::Connected {
-                break;
-            }
-        }
+        conn.monitor_connection().await;
 
-        //Returns handles to worker threads
-        let handles = conn.get_task_handles();
-        &self.connections.push(conn);
+        conn.wait_for_data_channel().await;
+
+        //Save connection so we can refernce it by index later
+        let connections = &mut self.connections;
+        connections.push(conn);
         Ok(())
     }
 
     #[instrument(skip_all,fields(node_id = self.get_node_id_fmt()))]
-    pub async fn receive_connection(&self) -> Result<()> {
+    pub async fn receive_connection(&mut self) -> Result<()> {
         let mut conn = Connection::new(
             &self.rtc_config.api,
             self.rtc_config.config.clone(),
@@ -142,10 +138,18 @@ impl Client {
         conn.register_data_channel().await;
         info!("Registered data channel");
         conn.init_ice_handler().await;
+        info!("init ice handler");
         conn.init_remote_handler().await?;
+        info!("init remote handler");
         conn.get_remote_node_id().await?;
         conn.answer().await?;
+        conn.monitor_connection().await;
 
+        conn.wait_for_data_channel().await;
+
+        //Save connection so we can refernce it by index later
+        let connections = &mut self.connections;
+        connections.push(conn);
         Ok(())
     }
 

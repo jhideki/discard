@@ -3,9 +3,10 @@ use iroh::net::endpoint::get_remote_node_id;
 use iroh::net::Endpoint;
 use iroh::node::ProtocolHandler;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -24,9 +25,9 @@ pub struct Session {
 #[derive(Debug)]
 pub struct SessionExchange {
     endpoint: Endpoint,
-    max_size: usize,
     session_tx: Mutex<Option<mpsc::Sender<Session>>>,
     node_id_tx: Mutex<Option<mpsc::Sender<NodeId>>>,
+    has_remote_id: Mutex<bool>,
 }
 
 impl ProtocolHandler for SessionExchange {
@@ -37,21 +38,42 @@ impl ProtocolHandler for SessionExchange {
 
             let (mut _send, mut recv) = connection.accept_bi().await?;
 
+            info!("-----Inside accept");
             //Set remote node id
-            let remote_node_id = get_remote_node_id(&connection)?;
-            let tx = self.node_id_tx.lock().await;
-            if let Some(tx) = tx.as_ref() {
-                tx.send(remote_node_id).await?;
+            let mut has_remote_id = self.has_remote_id.lock().await;
+            if !*has_remote_id {
+                let remote_node_id = get_remote_node_id(&connection)?;
+                let tx = self.node_id_tx.lock().await;
+
+                if let Some(tx) = tx.as_ref() {
+                    tx.send(remote_node_id).await?;
+                }
+                *has_remote_id = true;
             }
 
-            //Read session info
-            let bytes = recv.read_to_end(self.max_size).await?;
-            let remote_session = bincode::deserialize(&bytes)?;
+            info!("-----Set remote node id");
 
-            //Notify that sdp/ice candidate has been found to signal client struct
-            let tx = self.session_tx.lock().await;
-            if let Some(tx) = tx.as_ref() {
-                tx.send(remote_session).await?;
+            //Read session info
+            match recv.read_to_end(2000).await {
+                Ok(buf) => {
+                    /*if let Some(size) = size {
+                        debug!("size in bytes: {}", size);
+                    } else {
+                        debug!("No bytes received!");
+                    }*/
+                    info!("Receieved data!");
+                    match bincode::deserialize(&buf) {
+                        Ok(remote_session) => {
+                            //Notify that sdp/ice candidate has been found to signal client struct
+                            let tx = self.session_tx.lock().await;
+                            if let Some(tx) = tx.as_ref() {
+                                tx.send(remote_session).await?;
+                            }
+                        }
+                        Err(e) => error!("Error deserializing session: {}", e),
+                    }
+                }
+                Err(e) => error!("Error reading buffer: {}", e),
             }
 
             Ok(())
@@ -61,12 +83,11 @@ impl ProtocolHandler for SessionExchange {
 
 impl SessionExchange {
     pub fn new(endpoint: Endpoint) -> Arc<Self> {
-        let max_size = std::mem::size_of::<RTCSessionDescription>();
         Arc::new(Self {
             endpoint,
-            max_size,
             session_tx: Mutex::new(None),
             node_id_tx: Mutex::new(None),
+            has_remote_id: Mutex::new(false),
         })
     }
 
@@ -88,6 +109,7 @@ impl SessionExchange {
         let bytes = bincode::serialize(&session)?;
         send.write_all(&bytes).await?;
         send.finish().await?;
+        info!("Sent {} bytes", bytes.len());
         Ok(())
     }
 }
