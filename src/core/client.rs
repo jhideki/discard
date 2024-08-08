@@ -33,9 +33,17 @@ struct RTCConfig {
     config: RTCConfigurationWrapper,
 }
 
+//Used to manage connection states
+#[derive(Debug)]
+struct ConnSubscriber {
+    dc_rx: mpsc::Receiver<String>,
+    conn_rx: mpsc::Receiver<RTCPeerConnectionState>,
+    conn: Connection,
+}
+
 #[derive(Debug)]
 pub struct Client {
-    pub connections: Vec<Connection>,
+    pub connections: Vec<ConnSubscriber>,
     rtc_config: RTCConfig,
     node: Node<Store>,
     session_exchange: Arc<SessionExchange>,
@@ -104,7 +112,7 @@ impl Client {
         conn.set_remote_node_id(remote_node_id).await?;
 
         //Typical WebRTC steps...
-        let rx = conn.create_data_channel().await;
+        let dc_rx = conn.create_data_channel().await;
         info!("Created data channel!");
         conn.init_ice_handler().await;
         info!("Listening for ice candidates");
@@ -115,13 +123,19 @@ impl Client {
             Err(e) => error!("Error creating remote handler {}", e),
         }
 
-        conn.monitor_connection().await;
+        let conn_rx = conn.monitor_connection().await;
 
         conn.wait_for_data_channel().await;
 
+        let subscriber = ConnSubscriber {
+            dc_rx,
+            conn_rx,
+            conn,
+        };
+
         //Save connection so we can refernce it by index later
         let connections = &mut self.connections;
-        connections.push(conn);
+        connections.push(subscriber);
         Ok(())
     }
 
@@ -135,7 +149,7 @@ impl Client {
             self.connections.len(),
         )
         .await;
-        conn.register_data_channel().await;
+        let dc_rx = conn.register_data_channel().await;
         info!("Registered data channel");
         conn.init_ice_handler().await;
         info!("init ice handler");
@@ -143,15 +157,25 @@ impl Client {
         info!("init remote handler");
         conn.get_remote_node_id().await?;
         conn.answer().await?;
-        conn.monitor_connection().await;
+        let conn_rx = conn.monitor_connection().await;
 
         conn.wait_for_data_channel().await;
 
+        let subscriber = ConnSubscriber {
+            dc_rx,
+            conn_rx,
+            conn,
+        };
+
         //Save connection so we can refernce it by index later
         let connections = &mut self.connections;
-        connections.push(conn);
+        connections.push(subscriber);
+
         Ok(())
     }
+
+    //TODO: use tokio select to monitor each channel in connections vec
+    pub fn run(&self) {}
 
     pub fn get_node_id(&self) -> NodeId {
         self.node.node_id()

@@ -88,7 +88,7 @@ impl Connection {
         }
     }
 
-    pub async fn monitor_connection(&mut self) {
+    pub async fn monitor_connection(&mut self) -> mpsc::Receiver<RTCPeerConnectionState> {
         let (tx, mut rx) = mpsc::channel(1);
         let pc = Arc::clone(&self.peer_connection);
         pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
@@ -127,26 +127,15 @@ impl Connection {
         }));
 
         let current_state = Arc::clone(&self.current_state);
-        let is_connected = Arc::new(Notify::new());
 
-        let notify = Arc::clone(&is_connected);
-        let handle = tokio::spawn(async move {
-            while let Some(state) = rx.recv().await {
-                let mut cur_state = current_state.lock().await;
-                *cur_state = state;
-                if state == RTCPeerConnectionState::Disconnected {
-                    break;
-                } else if state == RTCPeerConnectionState::Connected {
-                    notify.notify_one();
-                }
+        while let Some(state) = rx.recv().await {
+            let mut cur_state = current_state.lock().await;
+            *cur_state = state;
+            if state == RTCPeerConnectionState::Disconnected {
+                break;
             }
-        });
-        //Continue to monitory connection
-        let handles = &mut self.task_handles;
-        handles.push(handle);
-
-        //Wait until state is conencted
-        is_connected.notified().await;
+        }
+        rx
     }
 
     pub async fn get_state(&self) -> Result<(RTCPeerConnectionState)> {
