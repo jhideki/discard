@@ -965,6 +965,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "clap",
+ "futures",
  "iroh",
  "rusqlite",
  "serde",

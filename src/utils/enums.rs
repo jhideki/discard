@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 #[derive(Deserialize, Serialize, Debug)]
 pub enum SessionType {
     Idle,
@@ -18,4 +19,10 @@ pub enum SignalMessageType {
     AddIceCandidate,
     OfferCreated,
     AnswerCreated,
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub enum MessageType {
+    String(String),
+    ConnectionState(RTCPeerConnectionState),
 }

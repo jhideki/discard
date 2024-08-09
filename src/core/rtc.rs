@@ -1,10 +1,9 @@
 use crate::core::signal::{Session, SessionExchange};
 use crate::utils::constants::{SEND_SESSION_DELAY, SEND_SESSION_TIMEOUT};
-use crate::utils::enums::ConnType;
+use crate::utils::enums::{ConnType, MessageType};
 
 use anyhow::{Context, Result};
 use iroh::net::NodeId;
-use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, Notify};
 use tokio::task::JoinHandle;
@@ -55,7 +54,6 @@ pub struct Connection {
     data_channel: Option<RTCDataChannelWrapper>,
     id: usize,
     remote_node_id: Arc<Mutex<Option<NodeId>>>,
-    current_state: Arc<Mutex<RTCPeerConnectionState>>,
     data_channel_notify: Arc<Notify>,
 }
 
@@ -83,12 +81,11 @@ impl Connection {
             data_channel: None,
             id,
             remote_node_id: Arc::new(Mutex::new(None)),
-            current_state: Arc::new(Mutex::new(RTCPeerConnectionState::Unspecified)),
             data_channel_notify: Arc::new(Notify::new()),
         }
     }
 
-    pub async fn monitor_connection(&mut self) -> mpsc::Receiver<RTCPeerConnectionState> {
+    pub async fn monitor_connection(&mut self) -> mpsc::Receiver<MessageType> {
         let (tx, mut rx) = mpsc::channel(1);
         let pc = Arc::clone(&self.peer_connection);
         pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
@@ -99,49 +96,34 @@ impl Connection {
                 match s {
                     RTCPeerConnectionState::New => {
                         info!("New connection!");
-                        tx.send(RTCPeerConnectionState::New).await;
                     }
                     RTCPeerConnectionState::Failed => {
                         info!("Failed connection");
-                        tx.send(RTCPeerConnectionState::Failed).await;
                     }
                     RTCPeerConnectionState::Closed => {
                         info!("Closed connection");
-                        tx.send(RTCPeerConnectionState::Closed).await;
                     }
                     RTCPeerConnectionState::Connected => {
                         info!("Connected!");
-                        tx.send(RTCPeerConnectionState::Connected).await;
                     }
                     RTCPeerConnectionState::Connecting => {
                         info!("Connecting...");
-                        tx.send(RTCPeerConnectionState::Connected).await;
                     }
                     RTCPeerConnectionState::Unspecified => {
                         info!("Unspecified?");
-                        tx.send(RTCPeerConnectionState::Unspecified).await;
                     }
                     _ => info!("???"),
                 }
+                tx.send(MessageType::ConnectionState(s));
             })
         }));
 
-        let current_state = Arc::clone(&self.current_state);
-
         while let Some(state) = rx.recv().await {
-            let mut cur_state = current_state.lock().await;
-            *cur_state = state;
-            if state == RTCPeerConnectionState::Disconnected {
+            if state == MessageType::ConnectionState(RTCPeerConnectionState::Disconnected) {
                 break;
             }
         }
         rx
-    }
-
-    pub async fn get_state(&self) -> Result<(RTCPeerConnectionState)> {
-        let state = Arc::clone(&self.current_state);
-        let state = state.lock().await;
-        Ok(*state)
     }
 
     pub async fn init_ice_handler(&self) {
@@ -322,7 +304,7 @@ impl Connection {
         Ok(())
     }
 
-    pub async fn create_data_channel(&mut self) -> mpsc::Receiver<String> {
+    pub async fn create_data_channel(&mut self) -> mpsc::Receiver<MessageType> {
         let pc = Arc::clone(&self.peer_connection);
         let data_channel = pc
             .create_data_channel("messaging", None)
@@ -344,16 +326,15 @@ impl Connection {
             info!("Message from peer, {}: {}", d_label, message);
             let tx = tx.clone();
             Box::pin(async move {
-                let _ = tx.send(message).await;
+                let _ = tx.send(MessageType::String(message)).await;
             })
         }));
         self.data_channel = Some(RTCDataChannelWrapper(Arc::clone(&data_channel)));
         rx
     }
 
-    pub async fn register_data_channel(&self) -> mpsc::Receiver<String> {
+    pub async fn register_data_channel(&self) -> mpsc::Receiver<MessageType> {
         let pc = Arc::clone(&self.peer_connection);
-        let mq = Arc::clone(&self.message_queue);
         let notify = Arc::clone(&self.data_channel_notify);
 
         let (tx, rx) = mpsc::channel(1);
@@ -361,7 +342,6 @@ impl Connection {
             notify.notify_waiters();
             info!("Data channel established from answerer");
             let d2 = Arc::clone(&d);
-            let mq = Arc::clone(&mq);
             let tx = tx.clone();
             Box::pin(async move {
                 d.on_open(Box::new(move || {
@@ -375,9 +355,8 @@ impl Connection {
                         String::from_utf8(msg.data.to_vec()).expect("Error parsing message");
                     info!("Message from peer: {}", message);
 
-                    let message_queue = Arc::clone(&mq);
                     Box::pin(async move {
-                        let _ = tx.send(message).await;
+                        let _ = tx.send(MessageType::String(message)).await;
                     })
                 }));
             })

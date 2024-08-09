@@ -2,19 +2,18 @@ use crate::core::rtc::{APIWrapper, Connection, RTCConfigurationWrapper};
 use crate::core::signal::SessionExchange;
 use crate::utils::{
     constants::{SDP_ALPN, STUN_SERVERS},
-    enums::ConnType,
+    enums::{ConnType, MessageType},
     types::NodeId,
 };
 
 use anyhow::Result;
+use futures::future;
 use iroh::{
     blobs::store::fs::Store,
     node::{Builder, Node},
 };
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, instrument, Span};
-use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use tracing::{debug, error, info, instrument};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
@@ -33,20 +32,13 @@ struct RTCConfig {
     config: RTCConfigurationWrapper,
 }
 
-//Used to manage connection states
-#[derive(Debug)]
-struct ConnSubscriber {
-    dc_rx: mpsc::Receiver<String>,
-    conn_rx: mpsc::Receiver<RTCPeerConnectionState>,
-    conn: Connection,
-}
-
 #[derive(Debug)]
 pub struct Client {
-    pub connections: Vec<ConnSubscriber>,
+    connections: Vec<Connection>,
     rtc_config: RTCConfig,
     node: Node<Store>,
     session_exchange: Arc<SessionExchange>,
+    receivers: Vec<mpsc::Receiver<MessageType>>,
 }
 
 impl Client {
@@ -95,6 +87,7 @@ impl Client {
             },
             node,
             session_exchange,
+            receivers: Vec::new(),
         }
     }
 
@@ -127,15 +120,14 @@ impl Client {
 
         conn.wait_for_data_channel().await;
 
-        let subscriber = ConnSubscriber {
-            dc_rx,
-            conn_rx,
-            conn,
-        };
-
         //Save connection so we can refernce it by index later
         let connections = &mut self.connections;
-        connections.push(subscriber);
+        connections.push(conn);
+
+        let receviers = &mut self.receivers;
+        receviers.push(dc_rx);
+        receviers.push(conn_rx);
+
         Ok(())
     }
 
@@ -161,21 +153,21 @@ impl Client {
 
         conn.wait_for_data_channel().await;
 
-        let subscriber = ConnSubscriber {
-            dc_rx,
-            conn_rx,
-            conn,
-        };
-
         //Save connection so we can refernce it by index later
         let connections = &mut self.connections;
-        connections.push(subscriber);
+        connections.push(conn);
+
+        let receviers = &mut self.receivers;
+        receviers.push(dc_rx);
+        receviers.push(conn_rx);
 
         Ok(())
     }
 
     //TODO: use tokio select to monitor each channel in connections vec
-    pub fn run(&self) {}
+    pub fn run(&self) {
+        let fused_futures = future::select_all(&self.receivers);
+    }
 
     pub fn get_node_id(&self) -> NodeId {
         self.node.node_id()
@@ -188,17 +180,9 @@ impl Client {
 
     pub async fn send_message(&self, conn_id: usize, message: String) -> Result<()> {
         let conn = &self.connections[conn_id];
-        conn.send_dc_message(message).await?;
+        //conn.send_dc_message(message).await?;
         //TODO: write message to db
 
         Ok(())
-    }
-
-    pub async fn get_message(&self, conn_id: usize) -> Result<String> {
-        let conn = &self.connections[conn_id];
-        if let Some(message) = conn.get_message().await {
-            return Ok(message);
-        }
-        Err(anyhow::anyhow!("No messages in queue!"))
     }
 }
