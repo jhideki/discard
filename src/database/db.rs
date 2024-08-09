@@ -4,6 +4,7 @@ use anyhow::Result;
 use rusqlite::{params_from_iter, Connection};
 use tracing::{error, info, warn};
 
+#[derive(Debug)]
 pub struct Database {
     conn: Connection,
 }

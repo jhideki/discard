@@ -1,5 +1,10 @@
 use crate::core::rtc::{APIWrapper, Connection, RTCConfigurationWrapper};
 use crate::core::signal::SessionExchange;
+use crate::database::{
+    db::Database,
+    models::{Message, User},
+};
+
 use crate::utils::{
     constants::{SDP_ALPN, STUN_SERVERS},
     enums::{ConnType, MessageType},
@@ -7,12 +12,13 @@ use crate::utils::{
 };
 
 use anyhow::Result;
-use futures::future;
+use futures::stream;
 use iroh::{
     blobs::store::fs::Store,
     node::{Builder, Node},
 };
 use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, info, instrument};
 use webrtc::{
     api::{
@@ -23,7 +29,9 @@ use webrtc::{
     peer_connection::configuration::RTCConfiguration,
 };
 
+use futures::stream::{select_all, StreamExt};
 use std::fmt::Debug;
+use std::mem;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -38,11 +46,12 @@ pub struct Client {
     rtc_config: RTCConfig,
     node: Node<Store>,
     session_exchange: Arc<SessionExchange>,
-    receivers: Vec<mpsc::Receiver<MessageType>>,
+    db: Database,
 }
 
 impl Client {
     pub async fn new(root: &str) -> Self {
+        //Iroh setup
         let builder = Builder::default()
             .persist(root)
             .await
@@ -59,6 +68,7 @@ impl Client {
             .await
             .expect("Failed to spawn node");
 
+        //Webrtc setup
         let stun_servers = STUN_SERVERS.iter().map(|&s| s.to_string()).collect();
 
         let config = RTCConfiguration {
@@ -79,6 +89,29 @@ impl Client {
             .with_media_engine(m)
             .with_interceptor_registry(registry)
             .build();
+
+        //DB setup
+        //TODO: change db directory to a proper file location for linux and windows
+        let mut db = match Database::new("./test-db3", "../database/init.sql") {
+            Ok(db) => db,
+            Err(e) => panic!(
+                "Error inintializing the database. Exiting the program... Error msg:  {}",
+                e
+            ),
+        };
+
+        //TODO: change user schema
+        let user = User {
+            user_id: 1,
+            display_name: "test".to_string(),
+            node_id: node.node_id().to_string(),
+        };
+
+        match db.write(&user) {
+            Ok(()) => (),
+            Err(e) => error!("Error initializing account. Error msg: {}", e),
+        }
+
         Client {
             connections: Vec::new(),
             rtc_config: RTCConfig {
@@ -87,12 +120,15 @@ impl Client {
             },
             node,
             session_exchange,
-            receivers: Vec::new(),
+            db,
         }
     }
 
     #[instrument(skip_all,fields(node_id = self.get_node_id_fmt()))]
-    pub async fn init_connection(&mut self, remote_node_id: NodeId) -> Result<()> {
+    pub async fn init_connection(
+        &mut self,
+        remote_node_id: NodeId,
+    ) -> Result<Vec<mpsc::Receiver<MessageType>>> {
         let mut conn = Connection::new(
             &self.rtc_config.api,
             self.rtc_config.config.clone(),
@@ -124,15 +160,11 @@ impl Client {
         let connections = &mut self.connections;
         connections.push(conn);
 
-        let receviers = &mut self.receivers;
-        receviers.push(dc_rx);
-        receviers.push(conn_rx);
-
-        Ok(())
+        Ok(vec![dc_rx, conn_rx])
     }
 
     #[instrument(skip_all,fields(node_id = self.get_node_id_fmt()))]
-    pub async fn receive_connection(&mut self) -> Result<()> {
+    pub async fn receive_connection(&mut self) -> Result<Vec<mpsc::Receiver<MessageType>>> {
         let mut conn = Connection::new(
             &self.rtc_config.api,
             self.rtc_config.config.clone(),
@@ -157,16 +189,54 @@ impl Client {
         let connections = &mut self.connections;
         connections.push(conn);
 
-        let receviers = &mut self.receivers;
-        receviers.push(dc_rx);
-        receviers.push(conn_rx);
-
-        Ok(())
+        Ok(vec![dc_rx, conn_rx])
     }
 
-    //TODO: use tokio select to monitor each channel in connections vec
-    pub fn run(&self) {
-        let fused_futures = future::select_all(&self.receivers);
+    pub async fn run(&mut self, receivers: Vec<mpsc::Receiver<MessageType>>) {
+        let streams: Vec<_> = receivers.into_iter().map(ReceiverStream::new).collect();
+        let mut fused_streams = stream::select_all(streams);
+        loop {
+            tokio::select! {
+                Some(msg) = fused_streams.next() => {
+                    match msg{
+                        MessageType::String(m) => { info!("Recieved message: {}", m);
+                            self.store_message(m);
+                        },
+                        MessageType::ConnectionState(_) => info!("Connection state changed"),
+                    }
+                }
+                else => {
+                info!("Strems have closed");
+                break;
+            }
+            }
+        }
+    }
+
+    fn store_message(&mut self, message: String) {
+        let db = &mut self.db;
+
+        let message = Message {
+            message_id: 1,
+            content: message,
+            sender_id: 1,
+        };
+        match db.write(&message) {
+            Ok(()) => info!("Succesfully wrote message to db"),
+            Err(e) => error!("Error writing message to db. Error msg: {}", e),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn get_most_recent_message(&self) -> Result<()> {
+        let conn = self.db.get_conn();
+
+        let result = conn.query_row(
+            "select * from messages where message_id = ?1",
+            [],
+            Message::from_row,
+        );
+        Ok(())
     }
 
     pub fn get_node_id(&self) -> NodeId {
@@ -180,7 +250,7 @@ impl Client {
 
     pub async fn send_message(&self, conn_id: usize, message: String) -> Result<()> {
         let conn = &self.connections[conn_id];
-        //conn.send_dc_message(message).await?;
+        conn.send_dc_message(message).await?;
         //TODO: write message to db
 
         Ok(())
