@@ -22,6 +22,13 @@ pub enum SignalMessageType {
     AnswerCreated,
 }
 
+#[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
+pub enum SignalMessage {
+    Online,
+    SendConenction,
+    ReceiveConnection,
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub enum MessageType {
     Message(TextMessage),

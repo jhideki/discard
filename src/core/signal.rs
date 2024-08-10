@@ -10,9 +10,12 @@ use tracing::{debug, error, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::utils::constants::ID_APLN;
+use crate::utils::enums::{MessageType, SignalMessage};
 use crate::utils::types::NodeId;
-use crate::utils::{constants::SDP_ALPN, types::BoxedFuture};
+use crate::utils::{
+    constants::{SDP_ALPN, SIGNAL_ALPN},
+    types::BoxedFuture,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Session {
@@ -102,5 +105,76 @@ impl SessionExchange {
         send.write_all(&bytes).await?;
         send.finish().await?;
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct Signaler {
+    endpoint: Endpoint,
+    sender: Mutex<Option<mpsc::Sender<SignalMessage>>>,
+}
+impl ProtocolHandler for Signaler {
+    fn accept(self: Arc<Self>, conn: iroh::net::endpoint::Connecting) -> BoxedFuture<Result<()>> {
+        Box::pin(async move {
+            let connection = conn.await?;
+            let (_send, mut recv) = connection.accept_bi().await?;
+            let buf = recv.read_to_end(64).await?;
+
+            let status = bincode::deserialize::<SignalMessage>(&buf)?;
+
+            let sender = self.sender.lock().await;
+
+            //Notify listner to set peer status to 'online'
+            if let Some(sender) = sender.as_ref() {
+                match status {
+                    SignalMessage::SendConenction => {
+                        sender.send(SignalMessage::ReceiveConnection).await;
+                    }
+                    SignalMessage::ReceiveConnection => {}
+                    SignalMessage::Online => {
+                        sender.send(SignalMessage::Online).await;
+                    }
+                }
+            }
+
+            Ok(())
+        })
+    }
+}
+
+impl Signaler {
+    pub fn new(endpoint: Endpoint) -> Arc<Self> {
+        Arc::new(Self {
+            endpoint,
+            sender: Mutex::new(None),
+        })
+    }
+    pub async fn notify_online(&self, remote_node_id: NodeId) -> Result<()> {
+        let conn = &self
+            .endpoint
+            .connect_by_node_id(remote_node_id, SIGNAL_ALPN)
+            .await?;
+        let (mut send, _recv) = conn.open_bi().await?;
+        let buf = bincode::serialize(&SignalMessage::Online)?;
+        send.write_all(&buf).await;
+        send.finish().await;
+        Ok(())
+    }
+
+    pub async fn notify_connection(&self, remote_node_id: NodeId) -> Result<()> {
+        let conn = &self
+            .endpoint
+            .connect_by_node_id(remote_node_id, SIGNAL_ALPN)
+            .await?;
+        let (mut send, _recv) = conn.open_bi().await?;
+        let buf = bincode::serialize(&SignalMessage::SendConenction)?;
+        send.write_all(&buf).await;
+        send.finish().await;
+        Ok(())
+    }
+
+    pub async fn init_sender(&self, sender: mpsc::Sender<SignalMessage>) {
+        let mut online_sender = self.sender.lock().await;
+        *online_sender = Some(sender);
     }
 }

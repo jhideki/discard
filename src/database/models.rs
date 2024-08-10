@@ -1,6 +1,6 @@
-use crate::utils::types::NodeId;
-use anyhow::Result;
 use rusqlite;
+
+use crate::utils::types::NodeId;
 
 pub trait ToSqlStatement {
     fn to_sql(&self) -> Vec<(&str, String)>;
@@ -18,6 +18,7 @@ pub struct User {
     pub user_id: i32,
     pub display_name: String,
     pub node_id: String,
+    pub is_online: bool,
 }
 
 impl FromRow for User {
@@ -27,6 +28,7 @@ impl FromRow for User {
             user_id: row.get("user_id")?,
             display_name: row.get("display_name")?,
             node_id: row.get("node_id")?,
+            is_online: row.get("is_online")?,
         })
     }
     fn table_name() -> &'static str {
@@ -37,9 +39,9 @@ impl FromRow for User {
 impl ToSqlStatement for User {
     fn to_sql(&self) -> Vec<(&str, String)> {
         vec![
-            ("user_id", self.user_id.to_string()),
             ("display_name", self.display_name.clone()),
             ("node_id", self.node_id.to_string()),
+            ("is_online", self.is_online.to_string()),
         ]
     }
     fn table_name() -> &'static str {
@@ -77,7 +79,6 @@ impl FromRow for Message {
 impl ToSqlStatement for Message {
     fn to_sql(&self) -> Vec<(&str, String)> {
         vec![
-            ("message_id", self.message_id.to_string()),
             ("sender_id", self.sender_id.to_string()),
             ("content", self.content.clone()),
             ("received_ts", self.sender_id.to_string()),

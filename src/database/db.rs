@@ -1,6 +1,7 @@
-use crate::database::models::{FromRow, ToSqlStatement};
+use crate::database::models::ToSqlStatement;
+use crate::utils::types::NodeId;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use rusqlite::{params_from_iter, Connection};
 use tracing::{error, info, warn};
 
@@ -71,10 +72,35 @@ impl Database {
                 .join(", "),
         );
         match conn.execute(&statement, params_from_iter(values.iter())) {
-            Ok(_) => info!("Succesfully wrote to db!"),
-            Err(e) => error!("Error writing to db: {}", e),
+            Ok(_) => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("Error writing to db: {}", e)),
         }
-        Ok(())
+    }
+
+    pub fn update_status(&mut self, node_id: NodeId, is_online: bool) -> Result<()> {
+        let conn = &self.conn;
+        let statement = format!(
+            "update users set is_online = {} where node_id = {}",
+            is_online, node_id
+        );
+
+        match conn.execute(&statement, []) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("Error updating user status {}", e)),
+        }
+    }
+
+    pub fn get_node_ids(&self) -> Result<Vec<NodeId>> {
+        let conn = &self.conn;
+        let mut statement = conn.prepare("select node_id from users where user_id > 1")?;
+        let rows: Vec<String> = statement
+            .query_map([], |row| Ok(row.get(0)?))?
+            .filter_map(Result::ok)
+            .collect();
+        let node_ids = rows
+            .into_iter()
+            .map(|row| serde_json::from_str(&row).expect("Error deserialzing"));
+        Ok(node_ids.collect())
     }
 
     pub fn get_conn(&self) -> &Connection {

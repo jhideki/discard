@@ -1,7 +1,8 @@
 create table if not exists users(
     user_id integer primary key autoincrement,
     display_name text not null,
-    node_id text not null
+    node_id blob not null
+    is_online boolean not null,
 );
 
 create table if not exists messages(

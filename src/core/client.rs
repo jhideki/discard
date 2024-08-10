@@ -1,12 +1,13 @@
 use crate::core::rtc::{APIWrapper, Connection, RTCConfigurationWrapper};
-use crate::core::signal::SessionExchange;
+use crate::core::signal::{SessionExchange, Signaler};
 use crate::database::{
     db::Database,
     models::{Message, User},
 };
 
+use crate::utils::enums::SignalMessage;
 use crate::utils::{
-    constants::{SDP_ALPN, STUN_SERVERS, TEST_DB_ROOT},
+    constants::{SDP_ALPN, SIGNAL_ALPN, STUN_SERVERS, TEST_DB_ROOT},
     enums::{ConnType, MessageType},
     types::{NodeId, TextMessage},
 };
@@ -31,7 +32,6 @@ use webrtc::{
 
 use futures::stream::{select_all, StreamExt};
 use std::fmt::Debug;
-use std::mem;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -47,6 +47,7 @@ pub struct Client {
     node: Node<Store>,
     session_exchange: Arc<SessionExchange>,
     db: Database,
+    signaler: Arc<Signaler>,
 }
 
 impl Client {
@@ -62,8 +63,10 @@ impl Client {
             .expect("Failed to build node");
 
         let session_exchange = SessionExchange::new(builder.endpoint().clone());
+        let signaler = Signaler::new(builder.endpoint().clone());
         let node = builder
             .accept(SDP_ALPN, session_exchange.clone())
+            .accept(SIGNAL_ALPN, signaler.clone())
             .spawn()
             .await
             .expect("Failed to spawn node");
@@ -118,6 +121,7 @@ impl Client {
             user_id: 1,
             display_name: "test".to_string(),
             node_id: node.node_id().to_string(),
+            is_online: true,
         };
 
         match db.write(&user) {
@@ -134,6 +138,7 @@ impl Client {
             node,
             session_exchange,
             db,
+            signaler,
         }
     }
 
@@ -207,7 +212,7 @@ impl Client {
         Ok(vec![dc_rx, conn_rx])
     }
 
-    pub async fn run(&mut self, receivers: Vec<mpsc::Receiver<MessageType>>) {
+    pub async fn run_connection(&mut self, receivers: Vec<mpsc::Receiver<MessageType>>) {
         let streams: Vec<_> = receivers.into_iter().map(ReceiverStream::new).collect();
         let mut fused_streams = stream::select_all(streams);
         loop {
@@ -257,8 +262,40 @@ impl Client {
     pub async fn send_message(&self, conn_id: usize, message: String) -> Result<()> {
         let conn = &self.connections[conn_id];
         conn.send_dc_message(message).await?;
+        let db = &mut self.db;
+
+        let message = Message {
+            message_id: 1,
+            content: message,
+            sender_id: 1,
+            sent_ts: Some(message.timestamp.to_string()),
+            read_ts: None,
+            received_ts: None,
+        };
+
+        match db.write(&message) {
+            Ok(()) => info!("Succesfully wrote message to db"),
+            Err(e) => error!("Error writing message to db. Error msg: {}", e),
+        }
         //TODO: write message to db
 
         Ok(())
+    }
+}
+
+//Main runtime loop of backend
+pub async fn run(mut client: Client) {
+    let (tx, mut rx) = mpsc::channel::<SignalMessage>(10);
+    client.signaler.init_sender(tx.clone());
+    while let Some(message) = rx.recv().await {
+        match message {
+            SignalMessage::ReceiveConnection => {
+                let handle = tokio::spawn(client.receive_connection());
+            }
+            SignalMessage::SendConenction => {
+                let handle = tokio::spawn(client.init_connection());
+            }
+            SignalMessage::Online => info!("Peer is online!"),
+        }
     }
 }

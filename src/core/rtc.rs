@@ -1,8 +1,12 @@
 use crate::core::signal::{Session, SessionExchange};
-use crate::utils::constants::{SEND_SESSION_DELAY, SEND_SESSION_TIMEOUT};
-use crate::utils::enums::{ConnType, MessageType};
+use crate::utils::{
+    constants::{SEND_SESSION_DELAY, SEND_SESSION_TIMEOUT},
+    enums::{ConnType, MessageType},
+    types::TextMessage,
+};
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use iroh::net::NodeId;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, Notify};
@@ -329,7 +333,11 @@ impl Connection {
             info!("Message from peer, {}: {}", d_label, message);
             let tx = tx.clone();
             Box::pin(async move {
-                let _ = tx.send(MessageType::String(message)).await;
+                let text_message = TextMessage {
+                    timestamp: Utc::now(),
+                    content: message,
+                };
+                let _ = tx.send(MessageType::Message(text_message)).await;
             })
         }));
         self.data_channel = Some(RTCDataChannelWrapper(Arc::clone(&data_channel)));
