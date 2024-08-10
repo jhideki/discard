@@ -38,7 +38,6 @@ impl ProtocolHandler for SessionExchange {
 
             let (mut _send, mut recv) = connection.accept_bi().await?;
 
-            info!("-----Inside accept");
             //Set remote node id
             let mut has_remote_id = self.has_remote_id.lock().await;
             if !*has_remote_id {
@@ -51,16 +50,9 @@ impl ProtocolHandler for SessionExchange {
                 *has_remote_id = true;
             }
 
-            info!("-----Set remote node id");
-
             //Read session info
             match recv.read_to_end(2000).await {
                 Ok(buf) => {
-                    /*if let Some(size) = size {
-                        debug!("size in bytes: {}", size);
-                    } else {
-                        debug!("No bytes received!");
-                    }*/
                     info!("Receieved data!");
                     match bincode::deserialize(&buf) {
                         Ok(remote_session) => {
@@ -109,7 +101,6 @@ impl SessionExchange {
         let bytes = bincode::serialize(&session)?;
         send.write_all(&bytes).await?;
         send.finish().await?;
-        info!("Sent {} bytes", bytes.len());
         Ok(())
     }
 }

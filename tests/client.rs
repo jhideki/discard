@@ -6,6 +6,7 @@ use tracing::{error, info};
 use std::sync::Arc;
 
 use discard::core::client::Client;
+use discard::utils::enums::MessageType;
 use discard::utils::logger;
 use utils::Cleanup;
 
@@ -13,7 +14,7 @@ use utils::Cleanup;
 #[tokio::test]
 async fn test_data_channel() {
     logger::init_tracing();
-    let test_paths = vec!["./test-root1", "./test-root2"];
+    let test_paths = vec!["./test-root1", "./test-root2", "./test-db.db3"];
 
     //Will remove test paths again at the end of the test
     let cleanup = Cleanup {
@@ -33,22 +34,18 @@ async fn test_data_channel() {
     //Receive conncetion from p1 by listening for new Sessions + p1.node_id
     let handle = tokio::spawn(async move {
         let result = p2.receive_connection().await;
+
         notify.notify_one();
 
-        assert!(result
-            .map_err(|e| println!("Failed recieve connection:  {}", e))
-            .is_ok());
+        assert!(result.is_ok());
 
-        let result = p2.get_message(0).await;
-        assert!(result
-            .map(|received_message| {
-                info!("Message: {}", received_message);
+        let mut receivers = result.expect("error");
 
-                assert!(received_message == message2, "Messages are not equal");
-                true
-            })
-            .map_err(|e| println!("Failed to get message: {}", e))
-            .unwrap_or(false))
+        if let Some(MessageType::String(received_message)) = receivers[0].recv().await {
+            info!("Received message: {}", received_message);
+
+            assert!(received_message == message2, "Messages are not equal");
+        }
     });
 
     //Initiliaze the connection with p2 by sending Session + self.node_id
@@ -57,9 +54,11 @@ async fn test_data_channel() {
         .map_err(|e| println!("Failed initiliaze connection:  {}", e))
         .is_ok());
 
+    println!("Waiting...");
     p2_connected.notified().await;
 
     let result = p1.send_message(0, message.clone()).await;
+    println!("Sent message");
     assert!(result
         .map_err(|e| println!("Failed to send message: {}", e))
         .is_ok());

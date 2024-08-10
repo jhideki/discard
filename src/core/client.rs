@@ -6,9 +6,9 @@ use crate::database::{
 };
 
 use crate::utils::{
-    constants::{SDP_ALPN, STUN_SERVERS},
+    constants::{SDP_ALPN, STUN_SERVERS, TEST_DB_ROOT},
     enums::{ConnType, MessageType},
-    types::NodeId,
+    types::{NodeId, TextMessage},
 };
 
 use anyhow::Result;
@@ -92,12 +92,25 @@ impl Client {
 
         //DB setup
         //TODO: change db directory to a proper file location for linux and windows
-        let mut db = match Database::new("./test-db3", "../database/init.sql") {
-            Ok(db) => db,
-            Err(e) => panic!(
-                "Error inintializing the database. Exiting the program... Error msg:  {}",
-                e
-            ),
+        let mut db = {
+            if cfg!(test) {
+                match Database::new(TEST_DB_ROOT, "../database/init.sql") {
+                    Ok(db) => db,
+                    Err(e) => panic!(
+                        "Error inintializing the database. Exiting the program... Error msg:  {}",
+                        e
+                    ),
+                }
+            } else {
+                //TODO: figure out actual persistent location
+                match Database::new("./test-db3", "../database/init.sql") {
+                    Ok(db) => db,
+                    Err(e) => panic!(
+                        "Error inintializing the database. Exiting the program... Error msg:  {}",
+                        e
+                    ),
+                }
+            }
         };
 
         //TODO: change user schema
@@ -153,6 +166,7 @@ impl Client {
         }
 
         let conn_rx = conn.monitor_connection().await;
+        info!("Connection is running");
 
         conn.wait_for_data_channel().await;
 
@@ -183,6 +197,7 @@ impl Client {
         conn.answer().await?;
         let conn_rx = conn.monitor_connection().await;
 
+        info!("Connection is running");
         conn.wait_for_data_channel().await;
 
         //Save connection so we can refernce it by index later
@@ -199,7 +214,7 @@ impl Client {
             tokio::select! {
                 Some(msg) = fused_streams.next() => {
                     match msg{
-                        MessageType::String(m) => { info!("Recieved message: {}", m);
+                        MessageType::Message(m) => { info!("Recieved message: {}", m);
                             self.store_message(m);
                         },
                         MessageType::ConnectionState(_) => info!("Connection state changed"),
@@ -213,30 +228,21 @@ impl Client {
         }
     }
 
-    fn store_message(&mut self, message: String) {
+    fn store_message(&mut self, message: TextMessage) {
         let db = &mut self.db;
 
         let message = Message {
             message_id: 1,
-            content: message,
+            content: message.content,
             sender_id: 1,
+            sent_ts: Some(message.timestamp.to_string()),
+            read_ts: None,
+            received_ts: None,
         };
         match db.write(&message) {
             Ok(()) => info!("Succesfully wrote message to db"),
             Err(e) => error!("Error writing message to db. Error msg: {}", e),
         }
-    }
-
-    #[cfg(test)]
-    pub fn get_most_recent_message(&self) -> Result<()> {
-        let conn = self.db.get_conn();
-
-        let result = conn.query_row(
-            "select * from messages where message_id = ?1",
-            [],
-            Message::from_row,
-        );
-        Ok(())
     }
 
     pub fn get_node_id(&self) -> NodeId {

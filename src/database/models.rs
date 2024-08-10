@@ -10,6 +10,7 @@ pub trait ToSqlStatement {
 pub trait FromRow {
     type Model;
     fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self::Model>;
+    fn table_name() -> &'static str;
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,6 +28,9 @@ impl FromRow for User {
             display_name: row.get("display_name")?,
             node_id: row.get("node_id")?,
         })
+    }
+    fn table_name() -> &'static str {
+        "users"
     }
 }
 
@@ -48,6 +52,9 @@ pub struct Message {
     pub message_id: i32,
     pub content: String,
     pub sender_id: i32,
+    pub received_ts: Option<String>,
+    pub sent_ts: Option<String>,
+    pub read_ts: Option<String>,
 }
 
 impl FromRow for Message {
@@ -57,7 +64,13 @@ impl FromRow for Message {
             message_id: row.get("message_id")?,
             content: row.get("content")?,
             sender_id: row.get("sender_id")?,
+            received_ts: row.get("received_ts")?,
+            sent_ts: row.get("sent_ts")?,
+            read_ts: row.get("read_ts")?,
         })
+    }
+    fn table_name() -> &'static str {
+        "messages"
     }
 }
 
@@ -65,8 +78,11 @@ impl ToSqlStatement for Message {
     fn to_sql(&self) -> Vec<(&str, String)> {
         vec![
             ("message_id", self.message_id.to_string()),
-            ("content", self.content.clone()),
             ("sender_id", self.sender_id.to_string()),
+            ("content", self.content.clone()),
+            ("received_ts", self.sender_id.to_string()),
+            ("sent_ts", self.sender_id.to_string()),
+            ("read_ts", self.sender_id.to_string()),
         ]
     }
     fn table_name() -> &'static str {

@@ -1,6 +1,6 @@
-use crate::database::models::ToSqlStatement;
+use crate::database::models::{FromRow, ToSqlStatement};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rusqlite::{params_from_iter, Connection};
 use tracing::{error, info, warn};
 

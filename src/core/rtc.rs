@@ -114,12 +114,15 @@ impl Connection {
                     }
                     _ => info!("???"),
                 }
-                tx.send(MessageType::ConnectionState(s));
+                if let Err(e) = tx.send(MessageType::ConnectionState(s)).await {
+                    error!("Error transmiting conection state. Err msg {}", e);
+                }
             })
         }));
 
+        //Busy wait until we are connected
         while let Some(state) = rx.recv().await {
-            if state == MessageType::ConnectionState(RTCPeerConnectionState::Disconnected) {
+            if state == MessageType::ConnectionState(RTCPeerConnectionState::Connected) {
                 break;
             }
         }

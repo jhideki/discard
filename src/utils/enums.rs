@@ -1,3 +1,4 @@
+use crate::utils::types::TextMessage;
 use serde::{Deserialize, Serialize};
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 #[derive(Deserialize, Serialize, Debug)]
@@ -23,6 +24,6 @@ pub enum SignalMessageType {
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum MessageType {
-    String(String),
+    Message(TextMessage),
     ConnectionState(RTCPeerConnectionState),
 }
