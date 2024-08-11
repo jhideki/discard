@@ -10,7 +10,7 @@ use tracing::{debug, error, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::utils::enums::{MessageType, SignalMessage};
+use crate::utils::enums::{MessageType, RunMessage, SignalMessage};
 use crate::utils::types::NodeId;
 use crate::utils::{
     constants::{SDP_ALPN, SIGNAL_ALPN},
@@ -111,7 +111,7 @@ impl SessionExchange {
 #[derive(Debug)]
 pub struct Signaler {
     endpoint: Endpoint,
-    sender: Mutex<Option<mpsc::Sender<SignalMessage>>>,
+    sender: Mutex<Option<mpsc::Sender<RunMessage>>>,
 }
 impl ProtocolHandler for Signaler {
     fn accept(self: Arc<Self>, conn: iroh::net::endpoint::Connecting) -> BoxedFuture<Result<()>> {
@@ -127,12 +127,11 @@ impl ProtocolHandler for Signaler {
             //Notify listner to set peer status to 'online'
             if let Some(sender) = sender.as_ref() {
                 match status {
-                    SignalMessage::SendConenction => {
-                        sender.send(SignalMessage::ReceiveConnection).await;
+                    SignalMessage::SendConnection => {
+                        sender.send(RunMessage::ReceiveMessage).await;
                     }
-                    SignalMessage::ReceiveConnection => {}
                     SignalMessage::Online => {
-                        sender.send(SignalMessage::Online).await;
+                        sender.send(RunMessage::Online).await;
                     }
                 }
             }
@@ -167,13 +166,13 @@ impl Signaler {
             .connect_by_node_id(remote_node_id, SIGNAL_ALPN)
             .await?;
         let (mut send, _recv) = conn.open_bi().await?;
-        let buf = bincode::serialize(&SignalMessage::SendConenction)?;
+        let buf = bincode::serialize(&SignalMessage::SendConnection)?;
         send.write_all(&buf).await;
         send.finish().await;
         Ok(())
     }
 
-    pub async fn init_sender(&self, sender: mpsc::Sender<SignalMessage>) {
+    pub async fn init_sender(&self, sender: mpsc::Sender<RunMessage>) {
         let mut online_sender = self.sender.lock().await;
         *online_sender = Some(sender);
     }

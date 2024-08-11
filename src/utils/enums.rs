@@ -1,4 +1,4 @@
-use crate::utils::types::TextMessage;
+use crate::utils::types::{NodeId, TextMessage};
 use serde::{Deserialize, Serialize};
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 #[derive(Deserialize, Serialize, Debug)]
@@ -25,8 +25,16 @@ pub enum SignalMessageType {
 #[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum SignalMessage {
     Online,
-    SendConenction,
-    ReceiveConnection,
+    SendConnection,
+}
+
+//Signals what the client should prepare for. E.g., ReceiveMessage will signal the client to
+//prepare to recieve an incoming message.
+#[derive(PartialEq, Clone, Debug)]
+pub enum RunMessage {
+    Online,
+    SendMessage((NodeId, TextMessage)),
+    ReceiveMessage,
 }
 
 #[derive(PartialEq, Clone, Debug)]

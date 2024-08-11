@@ -5,7 +5,7 @@ use crate::database::{
     models::{Message, User},
 };
 
-use crate::utils::enums::SignalMessage;
+use crate::utils::enums::{RunMessage, SignalMessage};
 use crate::utils::{
     constants::{SDP_ALPN, SIGNAL_ALPN, STUN_SERVERS, TEST_DB_ROOT},
     enums::{ConnType, MessageType},
@@ -18,7 +18,7 @@ use iroh::{
     blobs::store::fs::Store,
     node::{Builder, Node},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, info, instrument};
 use webrtc::{
@@ -30,7 +30,7 @@ use webrtc::{
     peer_connection::configuration::RTCConfiguration,
 };
 
-use futures::stream::{select_all, StreamExt};
+use futures::stream::StreamExt;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -142,98 +142,7 @@ impl Client {
         }
     }
 
-    #[instrument(skip_all,fields(node_id = self.get_node_id_fmt()))]
-    pub async fn init_connection(
-        &mut self,
-        remote_node_id: NodeId,
-    ) -> Result<Vec<mpsc::Receiver<MessageType>>> {
-        let mut conn = Connection::new(
-            &self.rtc_config.api,
-            self.rtc_config.config.clone(),
-            ConnType::Offerer,
-            self.session_exchange.clone(),
-            self.connections.len(),
-        )
-        .await;
-
-        conn.set_remote_node_id(remote_node_id).await?;
-
-        //Typical WebRTC steps...
-        let dc_rx = conn.create_data_channel().await;
-        info!("Created data channel!");
-        conn.init_ice_handler().await;
-        info!("Listening for ice candidates");
-        conn.offer().await?;
-        info!("Created offer!");
-        match conn.init_remote_handler().await {
-            Ok(()) => info!("Succesfully created remote handler"),
-            Err(e) => error!("Error creating remote handler {}", e),
-        }
-
-        let conn_rx = conn.monitor_connection().await;
-        info!("Connection is running");
-
-        conn.wait_for_data_channel().await;
-
-        //Save connection so we can refernce it by index later
-        let connections = &mut self.connections;
-        connections.push(conn);
-
-        Ok(vec![dc_rx, conn_rx])
-    }
-
-    #[instrument(skip_all,fields(node_id = self.get_node_id_fmt()))]
-    pub async fn receive_connection(&mut self) -> Result<Vec<mpsc::Receiver<MessageType>>> {
-        let mut conn = Connection::new(
-            &self.rtc_config.api,
-            self.rtc_config.config.clone(),
-            ConnType::Offerer,
-            self.session_exchange.clone(),
-            self.connections.len(),
-        )
-        .await;
-        let dc_rx = conn.register_data_channel().await;
-        info!("Registered data channel");
-        conn.init_ice_handler().await;
-        info!("init ice handler");
-        conn.init_remote_handler().await?;
-        info!("init remote handler");
-        conn.get_remote_node_id().await?;
-        conn.answer().await?;
-        let conn_rx = conn.monitor_connection().await;
-
-        info!("Connection is running");
-        conn.wait_for_data_channel().await;
-
-        //Save connection so we can refernce it by index later
-        let connections = &mut self.connections;
-        connections.push(conn);
-
-        Ok(vec![dc_rx, conn_rx])
-    }
-
-    pub async fn run_connection(&mut self, receivers: Vec<mpsc::Receiver<MessageType>>) {
-        let streams: Vec<_> = receivers.into_iter().map(ReceiverStream::new).collect();
-        let mut fused_streams = stream::select_all(streams);
-        loop {
-            tokio::select! {
-                Some(msg) = fused_streams.next() => {
-                    match msg{
-                        MessageType::Message(m) => { info!("Recieved message: {}", m);
-                            self.store_message(m);
-                        },
-                        MessageType::ConnectionState(_) => info!("Connection state changed"),
-                    }
-                }
-                else => {
-                info!("Strems have closed");
-                break;
-            }
-            }
-        }
-    }
-
-    fn store_message(&mut self, message: TextMessage) {
+    pub fn store_message(&mut self, message: TextMessage) {
         let db = &mut self.db;
 
         let message = Message {
@@ -259,14 +168,14 @@ impl Client {
         node_id.clone()
     }
 
-    pub async fn send_message(&self, conn_id: usize, message: String) -> Result<()> {
+    pub async fn send_message(&mut self, conn_id: usize, message: TextMessage) -> Result<()> {
         let conn = &self.connections[conn_id];
-        conn.send_dc_message(message).await?;
+        conn.send_dc_message(message.content.clone()).await?;
         let db = &mut self.db;
 
         let message = Message {
             message_id: 1,
-            content: message,
+            content: message.content,
             sender_id: 1,
             sent_ts: Some(message.timestamp.to_string()),
             read_ts: None,
@@ -277,25 +186,152 @@ impl Client {
             Ok(()) => info!("Succesfully wrote message to db"),
             Err(e) => error!("Error writing message to db. Error msg: {}", e),
         }
-        //TODO: write message to db
 
         Ok(())
     }
 }
 
 //Main runtime loop of backend
-pub async fn run(mut client: Client) {
-    let (tx, mut rx) = mpsc::channel::<SignalMessage>(10);
+//TODO: establish audio stream connections + file transmition
+pub async fn run(mut client: Client) -> Result<()> {
+    let (tx, mut rx) = mpsc::channel::<RunMessage>(10);
     client.signaler.init_sender(tx.clone());
+    let client = Arc::new(Mutex::new(client));
     while let Some(message) = rx.recv().await {
         match message {
-            SignalMessage::ReceiveConnection => {
-                let handle = tokio::spawn(client.receive_connection());
+            RunMessage::ReceiveMessage => {
+                let client = Arc::clone(&client);
+                let handle = tokio::spawn(receive_connection(client));
             }
-            SignalMessage::SendConenction => {
-                let handle = tokio::spawn(client.init_connection());
+            RunMessage::SendMessage((node_id, message)) => {
+                let client = Arc::clone(&client);
+
+                //Retreive connection id once connection is established
+                let (tx, rx) = oneshot::channel();
+
+                let handle = tokio::spawn(init_connection(client, node_id, tx));
+                let conn_id = rx.await?;
+                let client = client.lock().await;
+                //Send message after connection is established
+                client.send_message(conn_id, message);
             }
-            SignalMessage::Online => info!("Peer is online!"),
+            RunMessage::Online => info!("Peer is online!"),
+        }
+    }
+    Ok(())
+}
+
+pub async fn init_connection(
+    client: Arc<Mutex<Client>>,
+    remote_node_id: NodeId,
+    sender: oneshot::Sender<usize>,
+) -> Result<()> {
+    //Initialize the connection then drop the mutex on client
+    let mut conn = {
+        let client = client.lock().await;
+        let conn = Connection::new(
+            &client.rtc_config.api,
+            client.rtc_config.config.clone(),
+            ConnType::Offerer,
+            client.session_exchange.clone(),
+            client.connections.len(),
+        )
+        .await;
+        conn
+    };
+
+    conn.set_remote_node_id(remote_node_id).await?;
+
+    //Typical WebRTC steps...
+    let dc_rx = conn.create_data_channel().await;
+    info!("Created data channel!");
+    conn.init_ice_handler().await;
+    info!("Listening for ice candidates");
+    conn.offer().await?;
+    info!("Created offer!");
+    match conn.init_remote_handler().await {
+        Ok(()) => info!("Succesfully created remote handler"),
+        Err(e) => error!("Error creating remote handler {}", e),
+    }
+
+    let conn_rx = conn.monitor_connection().await;
+    info!("Connection is running");
+
+    conn.wait_for_data_channel().await;
+
+    //Save connection so we can refernce it by index later
+    {
+        let mut client = client.lock().await;
+        let connections = &mut client.connections;
+        connections.push(conn);
+
+        let id = connections.len() - 1;
+        sender.send(id);
+    }
+
+    run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]);
+    Ok(())
+}
+
+pub async fn receive_connection(client: Arc<Mutex<Client>>) -> Result<()> {
+    let mut conn = {
+        let client = client.lock().await;
+        let conn = Connection::new(
+            &client.rtc_config.api,
+            client.rtc_config.config.clone(),
+            ConnType::Offerer,
+            client.session_exchange.clone(),
+            client.connections.len(),
+        )
+        .await;
+        conn
+    };
+    let dc_rx = conn.register_data_channel().await;
+    info!("Registered data channel");
+    conn.init_ice_handler().await;
+    info!("init ice handler");
+    conn.init_remote_handler().await?;
+    info!("init remote handler");
+    conn.get_remote_node_id().await?;
+    conn.answer().await?;
+    let conn_rx = conn.monitor_connection().await;
+
+    info!("Connection is running");
+    conn.wait_for_data_channel().await;
+
+    //Save connection so we can refernce it by index later
+    {
+        let mut client = client.lock().await;
+        let connections = &mut client.connections;
+        connections.push(conn);
+    }
+
+    run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]);
+    Ok(())
+}
+
+pub async fn run_connection(
+    client: Arc<Mutex<Client>>,
+    receivers: Vec<mpsc::Receiver<MessageType>>,
+) {
+    let streams: Vec<_> = receivers.into_iter().map(ReceiverStream::new).collect();
+    let mut fused_streams = stream::select_all(streams);
+
+    loop {
+        tokio::select! {
+            Some(msg) = fused_streams.next() => {
+                match msg{
+                    MessageType::Message(m) => { info!("Recieved message: {}", m);
+                        let mut client = client.lock().await;
+                        client.store_message(m);
+                    },
+                    MessageType::ConnectionState(_) => info!("Connection state changed"),
+                }
+            }
+            else => {
+            info!("Strems have closed");
+            break;
+        }
         }
     }
 }
