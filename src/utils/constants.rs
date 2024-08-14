@@ -9,5 +9,8 @@ pub const SIGNAL_ALPN: &[u8] = b"discard/signal";
 pub const SEND_SESSION_DELAY: u64 = 2;
 pub const SEND_SESSION_TIMEOUT: u64 = 60;
 
+pub const SEND_TEXT_MESSAGE_DELAY: u64 = 1;
+pub const SEND_TEXT_MESSAGE_TIMEOUT: u64 = 10;
+
 //Test
 pub const TEST_DB_ROOT: &str = "./test-db";

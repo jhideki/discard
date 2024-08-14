@@ -3,7 +3,6 @@ use iroh::net::endpoint::get_remote_node_id;
 use iroh::net::Endpoint;
 use iroh::node::ProtocolHandler;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, error, info};

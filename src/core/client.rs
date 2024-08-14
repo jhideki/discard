@@ -5,10 +5,12 @@ use crate::database::{
     models::{Message, User},
 };
 
-use crate::utils::enums::{RunMessage, SignalMessage};
 use crate::utils::{
-    constants::{SDP_ALPN, SIGNAL_ALPN, STUN_SERVERS, TEST_DB_ROOT},
-    enums::{ConnType, MessageType},
+    constants::{
+        SDP_ALPN, SEND_TEXT_MESSAGE_DELAY, SEND_TEXT_MESSAGE_TIMEOUT, SIGNAL_ALPN, STUN_SERVERS,
+        TEST_DB_ROOT,
+    },
+    enums::{ConnType, MessageType, RunMessage, SignalMessage},
     types::{NodeId, TextMessage},
 };
 
@@ -19,6 +21,7 @@ use iroh::{
     node::{Builder, Node},
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, info, instrument};
 use webrtc::{
@@ -170,7 +173,21 @@ impl Client {
 
     pub async fn send_message(&mut self, conn_id: usize, message: TextMessage) -> Result<()> {
         let conn = &self.connections[conn_id];
-        conn.send_dc_message(message.content.clone()).await?;
+        match timeout(Duration::from_secs(SEND_TEXT_MESSAGE_TIMEOUT), async {
+            loop {
+                match conn.send_dc_message(message.content.clone()).await {
+                    Ok(_) => break,
+                    Err(e) => error!("Error sending text message {}", e),
+                }
+
+                sleep(Duration::from_secs(SEND_TEXT_MESSAGE_DELAY)).await;
+            }
+        })
+        .await
+        {
+            Ok(_) => info!("Succesfully sent text message"),
+            Err(_) => error!("Failed to send message. Will try again when peer is online"),
+        }
         let db = &mut self.db;
 
         let message = Message {
@@ -193,9 +210,13 @@ impl Client {
 
 //Main runtime loop of backend
 //TODO: establish audio stream connections + file transmition
-pub async fn run(mut client: Client) -> Result<()> {
-    let (tx, mut rx) = mpsc::channel::<RunMessage>(10);
-    client.signaler.init_sender(tx.clone());
+pub async fn run(
+    client: Client,
+    tx: mpsc::Sender<RunMessage>,
+    mut rx: mpsc::Receiver<RunMessage>,
+) -> Result<()> {
+    //Pass sender so that the signaler can signal when an peer wants to establish a connection
+    client.signaler.init_sender(tx.clone()).await;
     let client = Arc::new(Mutex::new(client));
     while let Some(message) = rx.recv().await {
         match message {
@@ -205,15 +226,17 @@ pub async fn run(mut client: Client) -> Result<()> {
             }
             RunMessage::SendMessage((node_id, message)) => {
                 let client = Arc::clone(&client);
+                let client2 = Arc::clone(&client);
 
                 //Retreive connection id once connection is established
                 let (tx, rx) = oneshot::channel();
 
                 let handle = tokio::spawn(init_connection(client, node_id, tx));
                 let conn_id = rx.await?;
-                let client = client.lock().await;
+
+                let mut client = client2.lock().await;
                 //Send message after connection is established
-                client.send_message(conn_id, message);
+                client.send_message(conn_id, message).await?;
             }
             RunMessage::Online => info!("Peer is online!"),
         }
@@ -266,10 +289,13 @@ pub async fn init_connection(
         connections.push(conn);
 
         let id = connections.len() - 1;
-        sender.send(id);
+        match sender.send(id) {
+            Ok(_) => {}
+            Err(e) => error!("Error sending conn id {}", e),
+        };
     }
 
-    run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]);
+    run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]).await;
     Ok(())
 }
 
@@ -306,7 +332,7 @@ pub async fn receive_connection(client: Arc<Mutex<Client>>) -> Result<()> {
         connections.push(conn);
     }
 
-    run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]);
+    run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]).await;
     Ok(())
 }
 

@@ -366,8 +366,13 @@ impl Connection {
                         String::from_utf8(msg.data.to_vec()).expect("Error parsing message");
                     info!("Message from peer: {}", message);
 
+                    let text_message = TextMessage {
+                        timestamp: chrono::Utc::now(),
+                        content: message,
+                    };
+
                     Box::pin(async move {
-                        let _ = tx.send(MessageType::String(message)).await;
+                        let _ = tx.send(MessageType::Message(text_message));
                     })
                 }));
             })
@@ -385,6 +390,16 @@ impl Connection {
         let candidates = Arc::clone(&self.candidates);
         let mut c = candidates.lock().await;
         c.push(candidate);
+    }
+
+    pub async fn close_connection(&self) -> Result<()> {
+        let pc = Arc::clone(&self.peer_connection);
+        if let Some(data_channel) = &self.data_channel {
+            let dc = Arc::clone(&data_channel.0);
+            dc.close().await;
+        }
+        pc.close().await;
+        Ok(())
     }
 
     //TODO: Update handles to be a tuple of task_type, handle

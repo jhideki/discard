@@ -1,7 +1,31 @@
-use rusqlite;
+use crate::utils::enums::UserStatus;
+use rusqlite::{
+    self,
+    types::FromSqlError,
+    types::{FromSql, FromSqlResult, ToSqlOutput},
+    ToSql,
+};
 
-use crate::utils::types::NodeId;
-
+impl ToSql for UserStatus {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        let value = match self {
+            UserStatus::Away => 0,
+            UserStatus::Online => 1,
+            UserStatus::Offline => 3,
+        };
+        Ok(ToSqlOutput::from(value))
+    }
+}
+impl FromSql for UserStatus {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> FromSqlResult<Self> {
+        match value.as_i64()? {
+            0 => Ok(UserStatus::Away),
+            1 => Ok(UserStatus::Online),
+            2 => Ok(UserStatus::Offline),
+            _ => Err(FromSqlError::InvalidType),
+        }
+    }
+}
 pub trait ToSqlStatement {
     fn to_sql(&self) -> Vec<(&str, String)>;
     fn table_name() -> &'static str;
@@ -18,7 +42,7 @@ pub struct User {
     pub user_id: i32,
     pub display_name: String,
     pub node_id: String,
-    pub is_online: bool,
+    pub status: UserStatus,
 }
 
 impl FromRow for User {
@@ -28,20 +52,19 @@ impl FromRow for User {
             user_id: row.get("user_id")?,
             display_name: row.get("display_name")?,
             node_id: row.get("node_id")?,
-            is_online: row.get("is_online")?,
+            status: row.get("status")?,
         })
     }
     fn table_name() -> &'static str {
         "users"
     }
 }
-
 impl ToSqlStatement for User {
     fn to_sql(&self) -> Vec<(&str, String)> {
         vec![
             ("display_name", self.display_name.clone()),
             ("node_id", self.node_id.to_string()),
-            ("is_online", self.is_online.to_string()),
+            ("status", self.status.to_string()),
         ]
     }
     fn table_name() -> &'static str {

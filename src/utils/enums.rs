@@ -1,3 +1,5 @@
+use core::fmt;
+
 use crate::utils::types::{NodeId, TextMessage};
 use serde::{Deserialize, Serialize};
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
@@ -7,6 +9,24 @@ pub enum SessionType {
     Chat,
     Video,
     Call,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum UserStatus {
+    Online,
+    Away,
+    Offline,
+}
+
+impl fmt::Display for UserStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let status = match self {
+            UserStatus::Offline => "offline",
+            UserStatus::Online => "online",
+            UserStatus::Away => "away",
+        };
+        write!(f, "{}", status)
+    }
 }
 
 #[derive(PartialEq, Clone, Debug)]

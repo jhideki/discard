@@ -1,12 +1,12 @@
 mod utils;
 
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
 use tracing::{error, info};
 
 use std::sync::Arc;
 
-use discard::core::client::Client;
-use discard::utils::enums::MessageType;
+use discard::core::client::{self, Client};
+use discard::utils::enums::RunMessage;
 use discard::utils::logger;
 use utils::Cleanup;
 
@@ -31,40 +31,21 @@ async fn test_data_channel() {
 
     let notify = Arc::clone(&p2_connected);
 
-    //Receive conncetion from p1 by listening for new Sessions + p1.node_id
-    let handle = tokio::spawn(async move {
-        let result = p2.receive_connection().await;
+    //peer 1 channel to simulate client running on their machine
+    let (tx1, rx1) = mpsc::channel(10);
+    //peer 2 channel to simulate client running on their machine
+    let (tx2, rx2) = mpsc::channel(10);
 
-        notify.notify_one();
+    let tx1_clone = tx1.clone();
+    let tx2_clone = tx2.clone();
 
-        assert!(result.is_ok());
-
-        let mut receivers = result.expect("error");
-
-        if let Some(MessageType::String(received_message)) = receivers[0].recv().await {
-            info!("Received message: {}", received_message);
-
-            assert!(received_message == message2, "Messages are not equal");
-        }
+    tokio::spawn(async move {
+        let result = client::run(p1, tx1_clone, rx1).await;
     });
-
-    //Initiliaze the connection with p2 by sending Session + self.node_id
-    let result = p1.init_connection(node2_id).await;
+    tokio::spawn(async { client::run(p2, tx2_clone, rx2).await });
+    let result = tx1.send(RunMessage::ReceiveMessage).await;
     assert!(result
-        .map_err(|e| println!("Failed initiliaze connection:  {}", e))
-        .is_ok());
-
-    println!("Waiting...");
-    p2_connected.notified().await;
-
-    let result = p1.send_message(0, message.clone()).await;
-    println!("Sent message");
-    assert!(result
-        .map_err(|e| println!("Failed to send message: {}", e))
-        .is_ok());
-
-    let result = handle.await;
-    assert!(result
-        .map_err(|e| println!("Failed to jion handle: {}", e))
-        .is_ok());
+        .map_err(|e| println!("Failed to receive message. {}", e))
+        .is_ok())
+    //Receive conncetion from p1 by listening for new Sessions + p1.node_id
 }

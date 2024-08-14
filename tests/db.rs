@@ -2,6 +2,7 @@ mod utils;
 use discard::core::client::Client;
 use discard::database::db::Database;
 use discard::database::models::{FromRow, Message, User};
+use discard::utils::enums::UserStatus;
 use discard::utils::logger;
 use utils::Cleanup;
 
@@ -28,12 +29,16 @@ async fn test_db_basic() {
         message_id: 1,
         content: "test".to_string(),
         sender_id: 1,
+        read_ts: None,
+        sent_ts: None,
+        received_ts: None,
     };
 
     let user = User {
         user_id: 1,
         display_name: "test".to_string(),
         node_id: client.get_node_id().to_string(),
+        status: UserStatus::Online,
     };
 
     let result = db.write(&user);

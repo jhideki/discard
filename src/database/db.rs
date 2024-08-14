@@ -1,5 +1,5 @@
-use crate::database::models::ToSqlStatement;
 use crate::utils::types::NodeId;
+use crate::{database::models::ToSqlStatement, utils::enums::UserStatus};
 
 use anyhow::Result;
 use rusqlite::{params_from_iter, Connection};
@@ -77,14 +77,13 @@ impl Database {
         }
     }
 
-    pub fn update_status(&mut self, node_id: NodeId, is_online: bool) -> Result<()> {
+    pub fn update_status(&mut self, node_id: NodeId, user_status: UserStatus) -> Result<()> {
         let conn = &self.conn;
-        let statement = format!(
-            "update users set is_online = {} where node_id = {}",
-            is_online, node_id
-        );
 
-        match conn.execute(&statement, []) {
+        match conn.execute(
+            "update users set user_status = ?1 where node_id = ?2",
+            [&user_status, &user_status],
+        ) {
             Ok(_) => Ok(()),
             Err(e) => Err(anyhow::anyhow!("Error updating user status {}", e)),
         }
