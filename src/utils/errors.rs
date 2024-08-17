@@ -1,4 +1,5 @@
-use core::fmt;
+use std::error::Error;
+use std::fmt;
 
 #[derive(Debug)]
 pub struct TimeoutError {
@@ -13,5 +14,24 @@ impl fmt::Display for TimeoutError {
             "Operation '{}', timed out after {:?}",
             self.operation, self.duration
         )
+    }
+}
+
+#[derive(Debug)]
+pub enum ParseEnumError {
+    InvalidVariant,
+}
+
+impl fmt::Display for ParseEnumError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseEnumError::InvalidVariant => write!(f, "Invalid enum variant"),
+        }
+    }
+}
+
+impl Error for ParseEnumError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
     }
 }

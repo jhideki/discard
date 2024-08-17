@@ -1,5 +1,7 @@
 use core::fmt;
+use std::str::FromStr;
 
+use crate::utils::errors::ParseEnumError;
 use crate::utils::types::{NodeId, TextMessage};
 use serde::{Deserialize, Serialize};
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
@@ -11,7 +13,7 @@ pub enum SessionType {
     Call,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum UserStatus {
     Online,
     Away,
@@ -26,6 +28,19 @@ impl fmt::Display for UserStatus {
             UserStatus::Away => "away",
         };
         write!(f, "{}", status)
+    }
+}
+
+impl FromStr for UserStatus {
+    type Err = ParseEnumError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "offline" => Ok(UserStatus::Offline),
+            "online" => Ok(UserStatus::Online),
+            "away" => Ok(UserStatus::Away),
+            _ => Err(ParseEnumError::InvalidVariant),
+        }
     }
 }
 

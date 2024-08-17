@@ -5,6 +5,7 @@ use crate::database::{
     models::{Message, User},
 };
 
+use crate::utils::enums::UserStatus;
 use crate::utils::{
     constants::{
         SDP_ALPN, SEND_TEXT_MESSAGE_DELAY, SEND_TEXT_MESSAGE_TIMEOUT, SIGNAL_ALPN, STUN_SERVERS,
@@ -123,11 +124,11 @@ impl Client {
         let user = User {
             user_id: 1,
             display_name: "test".to_string(),
-            node_id: node.node_id().to_string(),
-            is_online: true,
+            node_id: serde_json::to_string(&node.node_id()).unwrap(),
+            status: UserStatus::Online,
         };
 
-        match db.write(&user) {
+        match db.write_user(user) {
             Ok(()) => (),
             Err(e) => error!("Error initializing account. Error msg: {}", e),
         }
@@ -145,21 +146,22 @@ impl Client {
         }
     }
 
-    pub fn store_message(&mut self, message: TextMessage) {
+    pub fn store_message(&mut self, message: TextMessage) -> Result<()> {
         let db = &mut self.db;
 
         let message = Message {
             message_id: 1,
             content: message.content,
-            sender_id: 1,
+            sender_node_id: serde_json::to_string(&self.node.node_id())?,
             sent_ts: Some(message.timestamp.to_string()),
             read_ts: None,
             received_ts: None,
         };
-        match db.write(&message) {
+        match db.write_message(message) {
             Ok(()) => info!("Succesfully wrote message to db"),
             Err(e) => error!("Error writing message to db. Error msg: {}", e),
         }
+        Ok(())
     }
 
     pub fn get_node_id(&self) -> NodeId {
@@ -193,13 +195,13 @@ impl Client {
         let message = Message {
             message_id: 1,
             content: message.content,
-            sender_id: 1,
+            sender_node_id: serde_json::to_string(&self.node.node_id())?,
             sent_ts: Some(message.timestamp.to_string()),
             read_ts: None,
             received_ts: None,
         };
 
-        match db.write(&message) {
+        match db.write_message(message) {
             Ok(()) => info!("Succesfully wrote message to db"),
             Err(e) => error!("Error writing message to db. Error msg: {}", e),
         }

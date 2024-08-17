@@ -1,8 +1,9 @@
+use crate::database::models::{Message, User};
+use crate::utils::enums::UserStatus;
 use crate::utils::types::NodeId;
-use crate::{database::models::ToSqlStatement, utils::enums::UserStatus};
 
 use anyhow::Result;
-use rusqlite::{params_from_iter, Connection};
+use rusqlite::{params, Connection};
 use tracing::{error, info, warn};
 
 #[derive(Debug)]
@@ -57,32 +58,37 @@ impl Database {
         Ok(Self { conn })
     }
 
-    pub fn write<T: ToSqlStatement>(&mut self, model: &T) -> Result<()> {
+    pub fn write_user(&self, user: User) -> Result<()> {
         let conn = &self.conn;
-        let fields = model.to_sql();
-        let columns: Vec<&str> = fields.iter().map(|(col, _)| *col).collect();
-        let values: Vec<String> = fields.iter().map(|(_, val)| val.clone()).collect();
-        let statement = format!(
-            "insert into {} ({}) values ({})",
-            T::table_name(),
-            columns.join(", "),
-            (0..values.len())
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-        match conn.execute(&statement, params_from_iter(values.iter())) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(anyhow::anyhow!("Error writing to db: {}", e)),
-        }
+        conn.execute(
+            "insert into users (display_name, node_id, status) values (?1, ?2, ?3)",
+            [&user.display_name, &user.node_id, &user.status.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn write_message(&self, message: Message) -> Result<()> {
+        let conn = &self.conn;
+        conn.execute(
+            "insert into messages (content, sender_node_id, received_ts,sent_ts, read_ts ) values (?1, ?2, ?3, ?4, ?5)",
+            params![
+                &message.content,
+                &message.sender_node_id,
+                &message.received_ts,
+                &message.sent_ts,
+                &message.read_ts,
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn update_status(&mut self, node_id: NodeId, user_status: UserStatus) -> Result<()> {
         let conn = &self.conn;
+        let node_id = serde_json::to_string(&node_id)?;
 
         match conn.execute(
-            "update users set user_status = ?1 where node_id = ?2",
-            [&user_status, &user_status],
+            "update users set status = ?1 where node_id = ?2",
+            [&user_status.to_string(), &node_id],
         ) {
             Ok(_) => Ok(()),
             Err(e) => Err(anyhow::anyhow!("Error updating user status {}", e)),
@@ -106,15 +112,12 @@ impl Database {
         &self.conn
     }
 
-    pub fn hard_reset(&self) {
+    pub fn hard_reset(&self) -> Result<()> {
         let conn = &self.conn;
-        if let Err(e) = conn.execute("drop table if exists", ["messages"]) {
-            error!("Error dropping table messages: {}", e);
-        }
+        conn.execute_batch("drop table if exists users;")?;
         info!("Dropped table messages");
-        if let Err(e) = conn.execute("drop table if exists", ["users"]) {
-            error!("Error dropping table users: {}", e);
-        }
+        conn.execute_batch("drop table if exists messages;")?;
         info!("Dropped table users");
+        Ok(())
     }
 }

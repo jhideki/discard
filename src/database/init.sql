@@ -1,16 +1,15 @@
-create table if not exists users(
-    user_id integer primary key autoincrement,
-    display_name text not null,
-    node_id blob not null
-    status integer not null,
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    display_name TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    status TEXT NOT NULL
 );
 
-create table if not exists messages(
-    message_id integer primary key autoincrement,
-    sender_id integer,
-    content text,
-    received_ts text,
-    sent_ts text,
-    read_ts text,
-    foreign key (sender_id) references users(user_id)
-)
+CREATE TABLE IF NOT EXISTS messages (
+    message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_node_id TEXT,
+    content TEXT,
+    received_ts TEXT,
+    sent_ts TEXT,
+    read_ts TEXT
+);
