@@ -61,4 +61,5 @@ async fn test_data_channel() {
             assert!(result.is_ok());
         };
     });
+    cleanup.remove_test_paths();
 }
