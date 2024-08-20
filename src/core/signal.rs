@@ -9,7 +9,7 @@ use tracing::{debug, error, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::utils::enums::{MessageType, RunMessage, SignalMessage};
+use crate::utils::enums::{MessageType, RunMessage, SignalMessage, UserStatus};
 use crate::utils::types::NodeId;
 use crate::utils::{
     constants::{SDP_ALPN, SIGNAL_ALPN},
@@ -127,10 +127,10 @@ impl ProtocolHandler for Signaler {
             if let Some(sender) = sender.as_ref() {
                 match status {
                     SignalMessage::SendConnection => {
-                        sender.send(RunMessage::ReceiveMessage).await;
+                        let _ = sender.send(RunMessage::ReceiveMessage).await;
                     }
-                    SignalMessage::Online => {
-                        sender.send(RunMessage::Online).await;
+                    SignalMessage::Online(node_id, user_status) => {
+                        sender.send(RunMessage::Online(node_id, user_status)).await;
                     }
                 }
             }
@@ -147,13 +147,19 @@ impl Signaler {
             sender: Mutex::new(None),
         })
     }
-    pub async fn notify_online(&self, remote_node_id: NodeId) -> Result<()> {
+
+    pub async fn notify_status_change(
+        &self,
+        remote_node_id: NodeId,
+        new_status: UserStatus,
+    ) -> Result<()> {
+        let node_id = self.endpoint.node_id();
         let conn = &self
             .endpoint
             .connect_by_node_id(remote_node_id, SIGNAL_ALPN)
             .await?;
         let (mut send, _recv) = conn.open_bi().await?;
-        let buf = bincode::serialize(&SignalMessage::Online)?;
+        let buf = bincode::serialize(&SignalMessage::Online(node_id, new_status))?;
         send.write_all(&buf).await;
         send.finish().await;
         Ok(())

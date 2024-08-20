@@ -99,7 +99,7 @@ impl Client {
 
         //DB setup
         //TODO: change db directory to a proper file location for linux and windows
-        let mut db = {
+        let db = {
             if cfg!(test) {
                 match Database::new(TEST_DB_ROOT, "../database/init.sql") {
                     Ok(db) => db,
@@ -110,7 +110,9 @@ impl Client {
                 }
             } else {
                 //TODO: figure out actual persistent location
-                match Database::new("./test-db3", "../database/init.sql") {
+                let mut db_root = String::from(root);
+                db_root.push_str(".db3");
+                match Database::new(&db_root, "./src/database/init.sql") {
                     Ok(db) => db,
                     Err(e) => panic!(
                         "Error inintializing the database. Exiting the program... Error msg:  {}",
@@ -162,6 +164,26 @@ impl Client {
             Err(e) => error!("Error writing message to db. Error msg: {}", e),
         }
         Ok(())
+    }
+
+    pub fn update_status(&mut self, node_id: NodeId, status: UserStatus) -> Result<()> {
+        let db = &mut self.db;
+        match db.update_status(node_id, status) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("Error updating user status: {}", e)),
+        }
+    }
+
+    pub fn add_user(&mut self, node_id: NodeId, display_name: String) -> Result<()> {
+        let db = &mut self.db;
+        let serialized_id = serde_json::to_string(&node_id)?;
+        let user = User {
+            node_id: serialized_id,
+            display_name,
+            status: UserStatus::Online,
+            user_id: 0, //dummy id, wont' actually be 0 in the db
+        };
+        db.write_user(user)
     }
 
     pub fn get_node_id(&self) -> NodeId {
@@ -226,7 +248,7 @@ pub async fn run(
                 let client = Arc::clone(&client);
                 let handle = tokio::spawn(receive_connection(client));
             }
-            RunMessage::SendMessage((node_id, message)) => {
+            RunMessage::SendMessage(node_id, message) => {
                 let client = Arc::clone(&client);
                 let client2 = Arc::clone(&client);
 
@@ -240,7 +262,23 @@ pub async fn run(
                 //Send message after connection is established
                 client.send_message(conn_id, message).await?;
             }
-            RunMessage::Online => info!("Peer is online!"),
+            RunMessage::Online(node_id, user_status) => {
+                let client = Arc::clone(&client);
+                let mut client = client.lock().await;
+                match client.update_status(node_id, user_status) {
+                    Ok(()) => info!("Succesfully updated status "),
+                    Err(e) => error!("Failed to update status {}", e),
+                }
+                info!("Peer is online!");
+            }
+            RunMessage::Adduser(node_id, display_name) => {
+                let client = Arc::clone(&client);
+                let mut client = client.lock().await;
+                match client.add_user(node_id, display_name) {
+                    Ok(()) => info!("Succesfully added a user"),
+                    Err(e) => error!("Failed to add user {}", e),
+                }
+            }
         }
     }
     Ok(())

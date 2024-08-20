@@ -13,7 +13,7 @@ pub enum SessionType {
     Call,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum UserStatus {
     Online,
     Away,
@@ -59,7 +59,7 @@ pub enum SignalMessageType {
 
 #[derive(PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum SignalMessage {
-    Online,
+    Online(NodeId, UserStatus),
     SendConnection,
 }
 
@@ -67,8 +67,9 @@ pub enum SignalMessage {
 //prepare to recieve an incoming message.
 #[derive(PartialEq, Clone, Debug)]
 pub enum RunMessage {
-    Online,
-    SendMessage((NodeId, TextMessage)),
+    Online(NodeId, UserStatus),
+    SendMessage(NodeId, TextMessage),
+    Adduser(NodeId, String),
     ReceiveMessage,
 }
 
