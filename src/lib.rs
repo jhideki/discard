@@ -8,6 +8,7 @@ pub mod utils {
 }
 pub mod core {
     pub mod client;
+    pub mod ipc;
     pub mod rtc;
     pub mod signal;
 }

@@ -1,14 +1,16 @@
 use chrono::{DateTime, Utc};
 use iroh::net::key::PublicKey;
+use serde::{Deserialize, Serialize};
 use std::boxed::Box;
 use std::future::Future;
 use std::pin::Pin;
 
-use super::enums::UserStatus;
+use crate::utils::enums::RunMessage;
+
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 pub type NodeId = PublicKey; // Alias for public key
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct TextMessage {
     pub content: String,
     pub timestamp: DateTime<Utc>,

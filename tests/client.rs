@@ -1,5 +1,6 @@
 mod utils;
 
+use discard::core::ipc::IPCMessage;
 use discard::utils::types::TextMessage;
 use tokio::sync::{mpsc, oneshot, Notify};
 use tracing::{error, info};
@@ -23,43 +24,48 @@ async fn test_data_channel() {
     };
     cleanup.remove_test_paths();
 
-    let p1 = Client::new(test_paths[0]).await;
+    let mut p1 = Client::new(test_paths[0]).await;
+    let p1_node_id = p1.get_node_id();
     let p2 = Client::new(test_paths[1]).await;
-    let node2_id = p2.get_node_id();
-    let message = String::from("test message");
-    let message2 = message.clone();
-    let p2_connected = Arc::new(Notify::new());
+    let p2_node_id = p2.get_node_id();
 
-    let notify = Arc::clone(&p2_connected);
-    let (tx, rx) = oneshot::channel();
-
+    //peer 1 channel to simulate client receiving a message
+    let (tx1, rx1) = mpsc::channel::<RunMessage>(10);
+    let (ipc_tx, ipc_rx) = mpsc::channel::<IPCMessage>(10);
+    println!("---------spawning peer 1");
+    let sender = tx1.clone();
     tokio::spawn(async move {
-        //peer 1 channel to simulate client running on their machine
-        let (tx1, rx1) = mpsc::channel(10);
-        let node_id = p1.get_node_id();
-        let result = client::run(p1, tx1.clone(), rx1).await;
-        assert!(result.is_ok());
-        let result = tx1.send(RunMessage::ReceiveMessage).await;
-        assert!(result.is_ok());
-        let result = tx.send(node_id);
+        let result = client::run(p1, sender, rx1, ipc_tx).await;
         assert!(result.is_ok());
     });
 
+    let result = tx1.send(RunMessage::ReceiveMessage).await;
+    assert!(result.is_ok());
+    println!("recievemessage sent");
+    assert!(result.is_ok());
+
+    //peer 2 channel to send peer 1 a message
+    let (tx2, rx2) = mpsc::channel(10);
+
+    //Used to transmit ipc message back to sender
+    let (ipc_tx2, ipc_rx2) = mpsc::channel::<IPCMessage>(10);
+    println!("---------spawning peer 2");
+    let sender = tx2.clone();
     tokio::spawn(async move {
-        if let Ok(node_id) = rx.blocking_recv() {
-            //peer 2 channel to simulate client running on their machine
-            let (tx2, rx2) = mpsc::channel(10);
-            let result = client::run(p2, tx2.clone(), rx2).await;
-            assert!(result.is_ok());
-            let text_message = TextMessage {
-                content: "test".to_string(),
-                timestamp: chrono::Utc::now(),
-            };
-            let result = tx2
-                .send(RunMessage::SendMessage(node_id, text_message))
-                .await;
-            assert!(result.is_ok());
-        };
+        println!("----------recieved node id from peer");
+        //peer 2 channel to simulate client running on their machine
+        let result = client::run(p2, sender.clone(), rx2, ipc_tx2).await;
+        assert!(result.is_ok());
     });
-    cleanup.remove_test_paths();
+
+    let text_message = TextMessage {
+        content: "test".to_string(),
+        timestamp: chrono::Utc::now(),
+    };
+    let result = tx2
+        .send(RunMessage::SendMessage(p1_node_id, text_message))
+        .await;
+    assert!(result.is_ok());
+    assert!(result.is_ok());
+    println!("--------- p1 and p2 done");
 }

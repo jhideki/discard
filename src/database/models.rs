@@ -59,6 +59,12 @@ pub struct Message {
     pub read_ts: Option<String>,
 }
 
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TextMessage: {}", self.content)
+    }
+}
+
 impl FromRow for Message {
     type Model = Message;
     fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {

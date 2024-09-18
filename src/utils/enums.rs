@@ -65,7 +65,7 @@ pub enum SignalMessage {
 
 //Signals what the client should prepare for. E.g., ReceiveMessage will signal the client to
 //prepare to recieve an incoming message.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum RunMessage {
     Online(NodeId, UserStatus),
     SendMessage(NodeId, TextMessage),

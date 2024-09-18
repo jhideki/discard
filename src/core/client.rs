@@ -1,8 +1,9 @@
+use crate::core::ipc::IPCMessage;
 use crate::core::rtc::{APIWrapper, Connection, RTCConfigurationWrapper};
 use crate::core::signal::{SessionExchange, Signaler};
 use crate::database::{
     db::Database,
-    models::{Message, User},
+    models::{FromRow, Message, User},
 };
 
 use crate::utils::enums::UserStatus;
@@ -230,6 +231,18 @@ impl Client {
 
         Ok(())
     }
+
+    pub async fn read_messages(&mut self, node_id: NodeId) -> Result<Vec<Message>> {
+        let db = &mut self.db;
+        let conn = db.get_conn();
+        let serialized_id = serde_json::to_string(&node_id).expect("error serializing node id");
+        let mut stmt = conn.prepare("select * from users where node_id = ?1")?;
+
+        let msg_iter = stmt.query_map([serialized_id], |row| Message::from_row(row))?;
+        let messages = msg_iter.map(|m| m.unwrap());
+
+        Ok(messages.collect())
+    }
 }
 
 //Main runtime loop of backend
@@ -238,13 +251,16 @@ pub async fn run(
     client: Client,
     tx: mpsc::Sender<RunMessage>,
     mut rx: mpsc::Receiver<RunMessage>,
+    data_tx: mpsc::Sender<IPCMessage>,
 ) -> Result<()> {
+    info!("Client is running...");
     //Pass sender so that the signaler can signal when an peer wants to establish a connection
     client.signaler.init_sender(tx.clone()).await;
     let client = Arc::new(Mutex::new(client));
     while let Some(message) = rx.recv().await {
         match message {
             RunMessage::ReceiveMessage => {
+                info!("Run message received");
                 let client = Arc::clone(&client);
                 let handle = tokio::spawn(receive_connection(client));
             }
@@ -281,6 +297,7 @@ pub async fn run(
             }
         }
     }
+
     Ok(())
 }
 
