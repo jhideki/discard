@@ -1,3 +1,5 @@
+mod utils;
+
 use discard::core::client::{self, Client};
 use discard::core::ipc::{self, IPCMessage};
 use discard::utils::enums::RunMessage;
@@ -5,8 +7,18 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout, Duration};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
+use utils::Cleanup;
+
 #[tokio::test]
 async fn test_ipc() {
+    //Test setup/cleanup
+    let test_paths = vec!["./test_path"];
+
+    let cleanup = Cleanup {
+        test_paths: &test_paths,
+    };
+
+    cleanup.remove_test_paths();
     //Send RunMessage
     let (runmessage_tx, runmessage_rx) = mpsc::channel(100);
     //Used to receive and send data back out through the socket
@@ -15,7 +27,7 @@ async fn test_ipc() {
     let runtime_tx = runmessage_tx.clone();
     tokio::spawn(async move { ipc::listen(data_rx, runtime_tx).await });
 
-    let client = Client::new("./").await;
+    let client = Client::new(test_paths[0]).await;
     let client_data_tx = data_tx.clone();
     let client_tx = runmessage_tx.clone();
     tokio::spawn(async move { client::run(client, client_tx, runmessage_rx, client_data_tx) });

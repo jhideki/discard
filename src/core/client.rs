@@ -101,25 +101,15 @@ impl Client {
         //DB setup
         //TODO: change db directory to a proper file location for linux and windows
         let db = {
-            if cfg!(test) {
-                match Database::new(TEST_DB_ROOT, "../database/init.sql") {
-                    Ok(db) => db,
-                    Err(e) => panic!(
-                        "Error inintializing the database. Exiting the program... Error msg:  {}",
-                        e
-                    ),
-                }
-            } else {
-                //TODO: figure out actual persistent location
-                let mut db_root = String::from(root);
-                db_root.push_str(".db3");
-                match Database::new(&db_root, "./src/database/init.sql") {
-                    Ok(db) => db,
-                    Err(e) => panic!(
-                        "Error inintializing the database. Exiting the program... Error msg:  {}",
-                        e
-                    ),
-                }
+            //TODO: figure out actual persistent location
+            let mut db_root = String::from(root);
+            db_root.push_str("/.db3");
+            match Database::new(&db_root, "./src/database/init.sql") {
+                Ok(db) => db,
+                Err(e) => panic!(
+                    "Error inintializing the database. Exiting the program... Error msg:  {}",
+                    e
+                ),
             }
         };
 
