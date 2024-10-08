@@ -6,8 +6,9 @@ import (
 )
 
 func main() {
-	api.Connect()
-	box := tview.NewBox().SetBorder(true).SetTitle("Hello, world!")
+	conn, _ := api.NewTCPClient("127.0.0.1:7878")
+
+	box := tview.NewBox().SetBorder(true).SetTitle("")
 	if err := tview.NewApplication().SetRoot(box, true).Run(); err != nil {
 		panic(err)
 	}

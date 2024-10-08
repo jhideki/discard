@@ -4,16 +4,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 )
-
-type IPCMessage struct {
-	RunMessage string `json:"RunMessage"`
-	Content    string `json:"Content"`
-}
 
 type TCPClient struct {
 	conn net.Conn
+}
+
+type IPCMessage struct {
+	MsgType string `json:"type"`
+	Content string `json:"data"`
+}
+
+type Adduser struct {
+	NodeId      string `json:"nodeId"`
+	DisplayName string `json:"displayName"`
+}
+
+type UpdateStatus struct {
+	NodeId     string `json:"nodeId"`
+	UserStatus string `json:"userStatus"`
+}
+
+type SendMessage struct {
+	NodeId  string `json:"userStatus"`
+	Content string `json:"content"`
 }
 
 func NewTCPClient(address string) (*TCPClient, error) {
@@ -25,10 +39,15 @@ func NewTCPClient(address string) (*TCPClient, error) {
 	return &TCPClient{conn: conn}, nil
 }
 
-func (client *TCPClient) Send(message IPCMessage) {
+func (client *TCPClient) Send(message IPCMessage) error {
 	jsonData, err := json.Marshal(message)
 	if err != nil {
 		return fmt.Errorf("Error marshaling data")
 	}
-
+	_, err = client.conn.Write(jsonData)
+	if err != nil {
+		return fmt.Errorf("Error writing data to client")
+	}
+	fmt.Println("Data sent succesfully")
+	return nil
 }

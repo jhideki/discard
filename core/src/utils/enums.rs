@@ -67,9 +67,17 @@ pub enum SignalMessage {
 //prepare to recieve an incoming message.
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum RunMessage {
-    Online(NodeId, UserStatus),
+    UpdateStatus(NodeId, UserStatus),
     SendMessage(NodeId, TextMessage),
     Adduser(NodeId, String),
+    ReceiveMessage,
+}
+
+#[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
+pub enum RunMessageType {
+    Online,
+    SendMessage,
+    AddUser,
     ReceiveMessage,
 }
 

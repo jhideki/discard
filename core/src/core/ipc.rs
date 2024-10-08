@@ -8,12 +8,40 @@ use std::collections::VecDeque;
 
 use anyhow::Result;
 
-use crate::utils::enums::RunMessage;
+use crate::utils::enums::{RunMessage, RunMessageType, UserStatus};
+use crate::utils::types::{NodeId, TextMessage};
+
+//Structs are public for UTs
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum IPCMessage {
+    Adduser(AdduserMsg),
+    UpdateStatus(UpdateStatusMsg),
+    SendMessage(SendMessageMsg),
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct IPCMessage {
-    pub run_message: RunMessage,
-    pub content: Vec<u8>,
+pub struct AdduserMsg {
+    #[serde(rename = "nodeId")]
+    pub node_id: NodeId,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct UpdateStatusMsg {
+    #[serde(rename = "nodeId")]
+    pub node_id: NodeId,
+    #[serde(rename = "userStatus")]
+    pub user_status: UserStatus,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct SendMessageMsg {
+    #[serde(rename = "nodeId")]
+    pub node_id: NodeId,
+    #[serde(rename = "content")]
+    pub content: String,
 }
 
 pub async fn listen(
@@ -34,11 +62,27 @@ pub async fn listen(
             let length = u32::from_be_bytes(length_buf);
             let mut body_buf = vec![0u8; length as usize];
             let _ = reader.read_exact(&mut body_buf).await;
-            let ipc_message = serde_json::from_slice::<IPCMessage>(&body_buf)
+            let ipc_message: IPCMessage = serde_json::from_slice::<IPCMessage>(&body_buf)
                 .expect("failed to Deserialize ipc message");
-            println!("{}", String::from_utf8(ipc_message.content).unwrap());
+
+            let run_message = match ipc_message {
+                IPCMessage::Adduser(add_user) => {
+                    RunMessage::Adduser(add_user.node_id, add_user.display_name)
+                }
+                IPCMessage::UpdateStatus(update_status) => {
+                    RunMessage::UpdateStatus(update_status.node_id, update_status.user_status)
+                }
+                IPCMessage::SendMessage(send_message) => {
+                    let msg_content = TextMessage {
+                        content: send_message.content,
+                        timestamp: chrono::Utc::now(),
+                    };
+                    RunMessage::SendMessage(send_message.node_id, msg_content)
+                }
+            };
+
             runtime_tx
-                .send(ipc_message.run_message)
+                .send(run_message)
                 .await
                 .expect("Failed to send run message from listener");
         }

@@ -268,7 +268,7 @@ pub async fn run(
                 //Send message after connection is established
                 client.send_message(conn_id, message).await?;
             }
-            RunMessage::Online(node_id, user_status) => {
+            RunMessage::UpdateStatus(node_id, user_status) => {
                 let client = Arc::clone(&client);
                 let mut client = client.lock().await;
                 match client.update_status(node_id, user_status) {
