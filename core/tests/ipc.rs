@@ -36,6 +36,7 @@ async fn test_ipc() {
         loop {
             let result = TcpStream::connect("127.0.0.1:7878").await;
             if result.is_ok() {
+                println!("Connected on 7878");
                 return result;
             }
             sleep(Duration::from_secs(1)).await;

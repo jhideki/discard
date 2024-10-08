@@ -21,8 +21,8 @@ pub async fn listen(
     runtime_tx: mpsc::Sender<RunMessage>,
 ) -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:7878").await?;
-    let (mut socket, _) = listener.accept().await?;
     loop {
+        let (mut socket, _) = listener.accept().await?;
         info!("Listening on localhost:7878...");
         {
             let mut length_buf = [0u8; 4];
@@ -36,6 +36,7 @@ pub async fn listen(
             let _ = reader.read_exact(&mut body_buf).await;
             let ipc_message = serde_json::from_slice::<IPCMessage>(&body_buf)
                 .expect("failed to Deserialize ipc message");
+            println!("{}", String::from_utf8(ipc_message.content).unwrap());
             runtime_tx
                 .send(ipc_message.run_message)
                 .await
