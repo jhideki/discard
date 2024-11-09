@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{error, info};
 
 use std::collections::VecDeque;
 
@@ -50,47 +50,58 @@ pub async fn listen(
 ) -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:7878").await?;
     loop {
-        let (mut socket, _) = listener.accept().await?;
         info!("Listening on localhost:7878...");
-        {
-            let mut length_buf = [0u8; 4];
+        match listener.accept().await {
+            Ok((mut socket, _)) => {
+                info!("Recieved data on 7878");
+                let mut buf = vec![0; 112];
 
-            let mut reader = BufReader::new(&mut socket);
-
-            let _ = reader.read_exact(&mut length_buf);
-
-            let length = u32::from_be_bytes(length_buf);
-            let mut body_buf = vec![0u8; length as usize];
-            let _ = reader.read_exact(&mut body_buf).await;
-            let ipc_message: IPCMessage = serde_json::from_slice::<IPCMessage>(&body_buf)
-                .expect("failed to Deserialize ipc message");
-
-            let run_message = match ipc_message {
-                IPCMessage::Adduser(add_user) => {
-                    RunMessage::Adduser(add_user.node_id, add_user.display_name)
+                //let mut reader = BufReader::new(&mut socket);
+                match socket.read_exact(&mut buf).await {
+                    Ok(num_bytes) => info!("Succesfully received {} bytes", num_bytes),
+                    Err(e) => {
+                        error!("Failed to read from socket {}", e);
+                        continue;
+                    }
                 }
-                IPCMessage::UpdateStatus(update_status) => {
-                    RunMessage::UpdateStatus(update_status.node_id, update_status.user_status)
-                }
-                IPCMessage::SendMessage(send_message) => {
-                    let msg_content = TextMessage {
-                        content: send_message.content,
-                        timestamp: chrono::Utc::now(),
-                    };
-                    RunMessage::SendMessage(send_message.node_id, msg_content)
-                }
-            };
 
-            runtime_tx
-                .send(run_message)
-                .await
-                .expect("Failed to send run message from listener");
+                let ipc_message = match serde_json::from_slice::<IPCMessage>(&buf) {
+                    Ok(ipc_message) => ipc_message,
+                    Err(e) => {
+                        error!("Error deserializing IPC message: {e}");
+                        continue;
+                    }
+                };
+
+                let run_message = match ipc_message {
+                    IPCMessage::Adduser(add_user) => {
+                        RunMessage::Adduser(add_user.node_id, add_user.display_name)
+                    }
+                    IPCMessage::UpdateStatus(update_status) => {
+                        RunMessage::UpdateStatus(update_status.node_id, update_status.user_status)
+                    }
+                    IPCMessage::SendMessage(send_message) => {
+                        info!("------------- IPC message received");
+                        let msg_content = TextMessage {
+                            content: send_message.content,
+                            timestamp: chrono::Utc::now(),
+                        };
+                        RunMessage::SendMessage(send_message.node_id, msg_content)
+                    }
+                };
+
+                runtime_tx
+                    .send(run_message)
+                    .await
+                    .expect("Failed to send run message from listener");
+                info!("Forwarded IPC message to runtime...");
+            }
+            Err(e) => error!("Error opening socket to 7878 {}", e),
         }
-
-        if let Some(response) = rx.recv().await {
+        /*if let Some(response) = rx.recv().await {
             let bytes = serialize_ipc_message(response)?;
             socket.write_all(&bytes).await?;
-        }
+        }*/
     }
 }
 

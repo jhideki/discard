@@ -130,7 +130,9 @@ impl ProtocolHandler for Signaler {
                         let _ = sender.send(RunMessage::ReceiveMessage).await;
                     }
                     SignalMessage::Online(node_id, user_status) => {
-                        sender.send(RunMessage::Online(node_id, user_status)).await;
+                        let _ = sender
+                            .send(RunMessage::UpdateStatus(node_id, user_status))
+                            .await;
                     }
                 }
             }

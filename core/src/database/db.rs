@@ -15,7 +15,6 @@ impl Database {
     pub fn new(root: &str, init_script: &str) -> Result<Self> {
         info!("Creating new db conn");
 
-        println!("-----------db root: {}", root);
         let conn = Connection::open(root).expect("Error creating db");
         {
             conn.execute(
