@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 
 use anyhow::Result;
 
-use crate::utils::enums::{RunMessage, RunMessageType, UserStatus};
+use crate::utils::enums::{RunMessage, UserStatus};
 use crate::utils::types::{NodeId, TextMessage};
 
 //Structs are public for UTs
@@ -49,21 +49,26 @@ pub async fn listen(
     runtime_tx: mpsc::Sender<RunMessage>,
 ) -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:7878").await?;
-    loop {
-        info!("Listening on localhost:7878...");
-        match listener.accept().await {
-            Ok((mut socket, _)) => {
-                info!("Recieved data on 7878");
-                let mut buf = vec![0; 112];
+    info!("Listening on localhost:7878...");
+    match listener.accept().await {
+        Ok((mut socket, _)) => {
+            info!("Recieved data on 7878");
+            let mut buf = vec![0; 1024];
 
-                //let mut reader = BufReader::new(&mut socket);
-                match socket.read_exact(&mut buf).await {
-                    Ok(num_bytes) => info!("Succesfully received {} bytes", num_bytes),
-                    Err(e) => {
-                        error!("Failed to read from socket {}", e);
-                        continue;
-                    }
-                }
+            //let mut reader = BufReader::new(&mut socket);
+            /*
+                            match socket.read_exact(&mut buf).await {
+                                Ok(num_bytes) => info!("Succesfully received {} bytes", num_bytes),
+                                Err(e) => {
+                                    error!("Failed to read from socket {}", e);
+                                    continue;
+                                }
+                            }
+            */
+
+            loop {
+                let num_bytes = socket.read(&mut buf).await.expect("Error reading...");
+                buf = buf[0..num_bytes].to_vec();
 
                 let ipc_message = match serde_json::from_slice::<IPCMessage>(&buf) {
                     Ok(ipc_message) => ipc_message,
@@ -96,13 +101,16 @@ pub async fn listen(
                     .expect("Failed to send run message from listener");
                 info!("Forwarded IPC message to runtime...");
             }
-            Err(e) => error!("Error opening socket to 7878 {}", e),
         }
-        /*if let Some(response) = rx.recv().await {
-            let bytes = serialize_ipc_message(response)?;
-            socket.write_all(&bytes).await?;
-        }*/
+        Err(e) => {
+            error!("Error opening socket to 7878 {}", e);
+            Err(anyhow::anyhow!("Timeout error"))
+        }
     }
+    /*if let Some(response) = rx.recv().await {
+        let bytes = serialize_ipc_message(response)?;
+        socket.write_all(&bytes).await?;
+    }*/
 }
 
 //custom serializetion for ipc. will probalby change later
