@@ -16,22 +16,22 @@ mod database {
     pub mod db;
     pub mod models;
 }
+use core::ipc;
+
 use crate::core::client::{run, Client};
+use crate::utils::logger;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, BufReader};
-use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use utils::enums::RunMessage;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    logger::init_tracing();
     let (tx, rx) = mpsc::channel(100);
     //Used to send data back out through the socket
     let (data_tx, data_rx) = mpsc::channel(100);
 
-    let listener_tx = tx.clone();
-    tokio::spawn(async move {});
+    let runtime_tx = tx.clone();
+    tokio::spawn(async move { ipc::listen(data_rx, runtime_tx, "7878".to_string()).await });
 
     let client = Client::new("./").await;
     run(client, tx, rx, data_tx).await?;

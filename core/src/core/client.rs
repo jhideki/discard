@@ -233,6 +233,17 @@ impl Client {
 
         Ok(messages.collect())
     }
+
+    pub fn get_user_node_id(&self, display_name: String) -> Result<String> {
+        let db = &self.db;
+        let conn = db.get_conn();
+        let node_id: String = conn.query_row(
+            "select node_id from users where display_name = ?1 fetch first 1 row only",
+            [display_name],
+            |row| row.get(0),
+        )?;
+        Ok(node_id)
+    }
 }
 
 //Main runtime loop of backend
@@ -284,6 +295,11 @@ pub async fn run(
                     Ok(()) => info!("Succesfully added a user"),
                     Err(e) => error!("Failed to add user {}", e),
                 }
+            }
+            RunMessage::GetNodeId(display_name) => {
+                let client = Arc::clone(&client);
+                let client = client.lock().await;
+                let node_id = client.get_user_node_id(display_name);
             }
         }
     }

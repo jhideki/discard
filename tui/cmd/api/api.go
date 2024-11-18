@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 )
 
@@ -15,7 +16,7 @@ type IPCMessage struct {
 	Content string `json:"data"`
 }
 
-type Adduser struct {
+type AddUser struct {
 	NodeId      string `json:"nodeId"`
 	DisplayName string `json:"displayName"`
 }
@@ -26,8 +27,28 @@ type UpdateStatus struct {
 }
 
 type SendMessage struct {
-	NodeId  string `json:"userStatus"`
+	NodeId  string `json:"nodeId"`
 	Content string `json:"content"`
+}
+
+func (client *TCPClient) AddUser(nodeId string, displayName string) {
+	user := AddUser{nodeId, displayName}
+	content, err := json.Marshal(user)
+	if err != nil {
+		log.Fatal("Error serializing content")
+	}
+	ipcMessage := IPCMessage{"AddUser", string(content)}
+	client.Send(ipcMessage)
+}
+
+func (client *TCPClient) SendMessage(nodeId string, displayName string) {
+	user := AddUser{nodeId, displayName}
+	content, err := json.Marshal(user)
+	if err != nil {
+		log.Fatal("Error serializing content")
+	}
+	ipcMessage := IPCMessage{"AddUser", string(content)}
+	client.Send(ipcMessage)
 }
 
 func NewTCPClient(address string) (*TCPClient, error) {

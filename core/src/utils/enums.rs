@@ -71,6 +71,7 @@ pub enum RunMessage {
     SendMessage(NodeId, TextMessage),
     Adduser(NodeId, String),
     ReceiveMessage,
+    GetNodeId(String),
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]

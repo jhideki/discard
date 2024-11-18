@@ -1,10 +1,8 @@
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{error, info};
-
-use std::collections::VecDeque;
 
 use anyhow::Result;
 
@@ -15,13 +13,20 @@ use crate::utils::types::{NodeId, TextMessage};
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum IPCMessage {
-    Adduser(AdduserMsg),
+    AddUser(AddUserMsg),
     UpdateStatus(UpdateStatusMsg),
     SendMessage(SendMessageMsg),
+    GetNodeId(GetNodeIdMsg),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct AdduserMsg {
+pub struct GetNodeIdMsg {
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct AddUserMsg {
     #[serde(rename = "nodeId")]
     pub node_id: NodeId,
     #[serde(rename = "displayName")]
@@ -45,27 +50,16 @@ pub struct SendMessageMsg {
 }
 
 pub async fn listen(
-    mut rx: mpsc::Receiver<IPCMessage>,
+    rx: mpsc::Receiver<IPCMessage>,
     runtime_tx: mpsc::Sender<RunMessage>,
+    port: String,
 ) -> Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:7878").await?;
-    info!("Listening on localhost:7878...");
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = TcpListener::bind(addr).await?;
+    info!("IPC listener running on localhost:{}...", port);
     match listener.accept().await {
         Ok((mut socket, _)) => {
-            info!("Recieved data on 7878");
             let mut buf = vec![0; 1024];
-
-            //let mut reader = BufReader::new(&mut socket);
-            /*
-                            match socket.read_exact(&mut buf).await {
-                                Ok(num_bytes) => info!("Succesfully received {} bytes", num_bytes),
-                                Err(e) => {
-                                    error!("Failed to read from socket {}", e);
-                                    continue;
-                                }
-                            }
-            */
-
             loop {
                 let num_bytes = socket.read(&mut buf).await.expect("Error reading...");
                 buf = buf[0..num_bytes].to_vec();
@@ -79,7 +73,7 @@ pub async fn listen(
                 };
 
                 let run_message = match ipc_message {
-                    IPCMessage::Adduser(add_user) => {
+                    IPCMessage::AddUser(add_user) => {
                         RunMessage::Adduser(add_user.node_id, add_user.display_name)
                     }
                     IPCMessage::UpdateStatus(update_status) => {
@@ -92,6 +86,10 @@ pub async fn listen(
                             timestamp: chrono::Utc::now(),
                         };
                         RunMessage::SendMessage(send_message.node_id, msg_content)
+                    }
+                    IPCMessage::GetNodeId(display_name) => {
+                        let display_name = display_name.display_name;
+                        RunMessage::GetNodeId(display_name)
                     }
                 };
 
@@ -111,17 +109,4 @@ pub async fn listen(
         let bytes = serialize_ipc_message(response)?;
         socket.write_all(&bytes).await?;
     }*/
-}
-
-//custom serializetion for ipc. will probalby change later
-//TODO: remove vecdeque impl
-pub fn serialize_ipc_message(ipc_message: IPCMessage) -> Result<Vec<u8>> {
-    let message_buf = bincode::serialize(&ipc_message)?;
-    let mut message_buf = VecDeque::from(message_buf);
-    //first 4 bytes of message
-    let len = message_buf.len().to_ne_bytes();
-    let _ = len.into_iter().rev().map(|b| message_buf.push_front(b));
-
-    let buf = Vec::from(message_buf);
-    Ok(buf)
 }
