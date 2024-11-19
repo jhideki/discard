@@ -234,7 +234,7 @@ impl Client {
         Ok(messages.collect())
     }
 
-    pub fn get_user_node_id(&self, display_name: String) -> Result<String> {
+    pub fn get_user_node_id(&self, display_name: String) -> Result<NodeId> {
         let db = &self.db;
         let conn = db.get_conn();
         let node_id: String = conn.query_row(
@@ -242,7 +242,17 @@ impl Client {
             [display_name],
             |row| row.get(0),
         )?;
+        let node_id: NodeId = serde_json::from_str(&node_id)?;
         Ok(node_id)
+    }
+
+    pub fn get_users(&self) -> Result<Vec<User>> {
+        let db = &self.db;
+        let conn = db.get_conn();
+        let mut stmt = conn.prepare("select * from users")?;
+        let user_iter = stmt.query_map([], |row| User::from_row(row))?;
+        let users = user_iter.map(|m| m.unwrap());
+        Ok(users.collect())
     }
 }
 
@@ -265,19 +275,21 @@ pub async fn run(
                 let client = Arc::clone(&client);
                 let handle = tokio::spawn(receive_connection(client));
             }
-            RunMessage::SendMessage(node_id, message) => {
+            RunMessage::SendMessage(display_name, message) => {
                 let client = Arc::clone(&client);
                 let client2 = Arc::clone(&client);
 
+                let mut client2 = client2.lock().await;
                 //Retreive connection id once connection is established
                 let (tx, rx) = oneshot::channel();
+
+                let node_id = client2.get_user_node_id(display_name)?;
 
                 let handle = tokio::spawn(init_connection(client, node_id, tx));
                 let conn_id = rx.await?;
 
-                let mut client = client2.lock().await;
                 //Send message after connection is established
-                client.send_message(conn_id, message).await?;
+                client2.send_message(conn_id, message).await?;
             }
             RunMessage::UpdateStatus(node_id, user_status) => {
                 let client = Arc::clone(&client);
@@ -296,10 +308,13 @@ pub async fn run(
                     Err(e) => error!("Failed to add user {}", e),
                 }
             }
-            RunMessage::GetNodeId(display_name) => {
+            RunMessage::GetUsers => {
                 let client = Arc::clone(&client);
                 let client = client.lock().await;
-                let node_id = client.get_user_node_id(display_name);
+                let users = client.get_users()?;
+                data_tx.send(IPCMessage::SendUsers(crate::core::ipc::SendUsersMsg {
+                    users,
+                }));
             }
         }
     }

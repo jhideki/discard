@@ -5,6 +5,7 @@ use rusqlite::{
     types::{FromSql, FromSqlResult, ToSqlOutput},
     ToSql,
 };
+use serde::{Deserialize, Serialize};
 
 impl ToSql for UserStatus {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
@@ -26,7 +27,7 @@ pub trait FromRow {
     fn table_name() -> &'static str;
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct User {
     pub user_id: i32,
     pub display_name: String,

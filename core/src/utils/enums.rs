@@ -68,10 +68,10 @@ pub enum SignalMessage {
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum RunMessage {
     UpdateStatus(NodeId, UserStatus),
-    SendMessage(NodeId, TextMessage),
+    SendMessage(String, TextMessage),
     Adduser(NodeId, String),
     ReceiveMessage,
-    GetNodeId(String),
+    GetUsers,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]

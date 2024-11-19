@@ -6,6 +6,7 @@ use tracing::{error, info};
 
 use anyhow::Result;
 
+use crate::database::models::User;
 use crate::utils::enums::{RunMessage, UserStatus};
 use crate::utils::types::{NodeId, TextMessage};
 
@@ -16,13 +17,14 @@ pub enum IPCMessage {
     AddUser(AddUserMsg),
     UpdateStatus(UpdateStatusMsg),
     SendMessage(SendMessageMsg),
-    GetNodeId(GetNodeIdMsg),
+    GetUsers,
+    SendUsers(SendUsersMsg),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct GetNodeIdMsg {
-    #[serde(rename = "displayName")]
-    pub display_name: String,
+pub struct SendUsersMsg {
+    #[serde(rename = "users")]
+    pub users: Vec<User>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -44,7 +46,7 @@ pub struct UpdateStatusMsg {
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct SendMessageMsg {
     #[serde(rename = "nodeId")]
-    pub node_id: NodeId,
+    pub display_name: String,
     #[serde(rename = "content")]
     pub content: String,
 }
@@ -85,12 +87,10 @@ pub async fn listen(
                             content: send_message.content,
                             timestamp: chrono::Utc::now(),
                         };
-                        RunMessage::SendMessage(send_message.node_id, msg_content)
+                        RunMessage::SendMessage(send_message.display_name, msg_content)
                     }
-                    IPCMessage::GetNodeId(display_name) => {
-                        let display_name = display_name.display_name;
-                        RunMessage::GetNodeId(display_name)
-                    }
+                    IPCMessage::GetUsers => RunMessage::GetUsers,
+                    IPCMessage::SendUsers()
                 };
 
                 runtime_tx
