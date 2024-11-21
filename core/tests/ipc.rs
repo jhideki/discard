@@ -74,6 +74,11 @@ async fn test_ipc_get_messages() {
     assert!(result.is_ok(), "Error reading resp bytes");
     let response_msg: IPCResponse =
         serde_json::from_slice(&buf).expect("Error deserialzing ipc response");
+    if let IPCResponse::SendUsers(users) = response_msg {
+        for user in users.users {
+            println!("--TEST {}", user.display_name);
+        }
+    }
 }
 
 #[tokio::test]
