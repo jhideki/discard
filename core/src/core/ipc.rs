@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -18,11 +18,16 @@ pub enum IPCMessage {
     UpdateStatus(UpdateStatusMsg),
     SendMessage(SendMessageMsg),
     GetUsers,
-    SendUsers(SendUsersMsg),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct SendUsersMsg {
+#[serde(tag = "type", content = "data")]
+pub enum IPCResponse {
+    SendUsers(SendUsersResp),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct SendUsersResp {
     #[serde(rename = "users")]
     pub users: Vec<User>,
 }
@@ -52,7 +57,7 @@ pub struct SendMessageMsg {
 }
 
 pub async fn listen(
-    rx: mpsc::Receiver<IPCMessage>,
+    mut rx: mpsc::Receiver<IPCResponse>,
     runtime_tx: mpsc::Sender<RunMessage>,
     port: String,
 ) -> Result<()> {
@@ -90,7 +95,6 @@ pub async fn listen(
                         RunMessage::SendMessage(send_message.display_name, msg_content)
                     }
                     IPCMessage::GetUsers => RunMessage::GetUsers,
-                    IPCMessage::SendUsers()
                 };
 
                 runtime_tx
@@ -98,6 +102,11 @@ pub async fn listen(
                     .await
                     .expect("Failed to send run message from listener");
                 info!("Forwarded IPC message to runtime...");
+
+                if let Some(response) = rx.recv().await {
+                    let bytes = serde_json::to_vec(&response)?;
+                    socket.write(&bytes).await?;
+                }
             }
         }
         Err(e) => {
@@ -105,8 +114,4 @@ pub async fn listen(
             Err(anyhow::anyhow!("Timeout error"))
         }
     }
-    /*if let Some(response) = rx.recv().await {
-        let bytes = serialize_ipc_message(response)?;
-        socket.write_all(&bytes).await?;
-    }*/
 }

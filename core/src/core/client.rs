@@ -1,4 +1,4 @@
-use crate::core::ipc::IPCMessage;
+use crate::core::ipc::{IPCMessage, IPCResponse, SendUsersResp};
 use crate::core::rtc::{APIWrapper, Connection, RTCConfigurationWrapper};
 use crate::core::signal::{SessionExchange, Signaler};
 use crate::database::{
@@ -10,7 +10,6 @@ use crate::utils::enums::UserStatus;
 use crate::utils::{
     constants::{
         SDP_ALPN, SEND_TEXT_MESSAGE_DELAY, SEND_TEXT_MESSAGE_TIMEOUT, SIGNAL_ALPN, STUN_SERVERS,
-        TEST_DB_ROOT,
     },
     enums::{ConnType, MessageType, RunMessage, SignalMessage},
     types::{NodeId, TextMessage},
@@ -25,7 +24,7 @@ use iroh::{
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{sleep, timeout, Duration};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, error, info, instrument};
+use tracing::{error, info};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
@@ -262,7 +261,7 @@ pub async fn run(
     client: Client,
     tx: mpsc::Sender<RunMessage>,
     mut rx: mpsc::Receiver<RunMessage>,
-    data_tx: mpsc::Sender<IPCMessage>,
+    data_tx: mpsc::Sender<IPCResponse>,
 ) -> Result<()> {
     info!("Client is running...");
     //Pass sender so that the signaler can signal when an peer wants to establish a connection
@@ -312,9 +311,8 @@ pub async fn run(
                 let client = Arc::clone(&client);
                 let client = client.lock().await;
                 let users = client.get_users()?;
-                data_tx.send(IPCMessage::SendUsers(crate::core::ipc::SendUsersMsg {
-                    users,
-                }));
+                let response = SendUsersResp { users };
+                data_tx.send(IPCResponse::SendUsers(response)).await?;
             }
         }
     }
@@ -427,7 +425,7 @@ pub async fn run_connection(
                 match msg{
                     MessageType::Message(m) => { info!("Recieved message: {}", m);
                         let mut client = client.lock().await;
-                        client.store_message(m);
+                        let _ = client.store_message(m);
                     },
                     MessageType::ConnectionState(_) => info!("Connection state changed"),
                 }
