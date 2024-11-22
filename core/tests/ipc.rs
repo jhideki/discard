@@ -11,6 +11,8 @@ use tokio::time::{sleep, timeout, Duration};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 use utils::Cleanup;
 
+use std::collections::HashSet;
+
 #[tokio::test]
 async fn test_ipc_get_messages() {
     //Test setup/cleanup
@@ -33,6 +35,9 @@ async fn test_ipc_get_messages() {
 
     let mut client = Client::new(test_paths[0]).await;
     let key = PublicKey::from_bytes(&[0; 32]).expect("Failed to gen dummy key");
+    let mut test_users = HashSet::new();
+    test_users.insert("test_user1".to_string());
+    test_users.insert("test_user2".to_string());
     client
         .add_user(key, "test_user1".to_string())
         .expect("Failed to add dummy user");
@@ -72,13 +77,22 @@ async fn test_ipc_get_messages() {
     let mut buf = vec![0; 1024];
     let result = stream.read(&mut buf).await;
     assert!(result.is_ok(), "Error reading resp bytes");
+    let num_bytes = result.unwrap();
+    println!("--- Num bytes recieved = {}", num_bytes);
+
+    buf = buf[0..num_bytes].to_vec();
     let response_msg: IPCResponse =
         serde_json::from_slice(&buf).expect("Error deserialzing ipc response");
     if let IPCResponse::SendUsers(users) = response_msg {
         for user in users.users {
-            println!("--TEST {}", user.display_name);
+            test_users.remove(&user.display_name);
         }
     }
+
+    assert!(
+        test_users.len() == 0,
+        "Test users do match values retreived from the client"
+    );
 }
 
 #[tokio::test]

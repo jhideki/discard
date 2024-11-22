@@ -105,6 +105,7 @@ pub async fn listen(
 
                 if let Some(response) = rx.recv().await {
                     let bytes = serde_json::to_vec(&response)?;
+                    info!("Num bytes in core/ipc: {}", bytes.len());
                     socket.write(&bytes).await?;
                 }
             }

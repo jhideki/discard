@@ -1,6 +1,6 @@
 mod utils;
 
-use discard::core::ipc::IPCMessage;
+use discard::core::ipc::{IPCMessage, IPCResponse};
 use discard::utils::types::TextMessage;
 use tokio::sync::{mpsc, oneshot, Notify};
 use tracing::{error, info};
@@ -31,7 +31,7 @@ async fn test_data_channel() {
 
     //peer 1 channel to simulate client receiving a message
     let (tx1, rx1) = mpsc::channel::<RunMessage>(10);
-    let (ipc_tx, ipc_rx) = mpsc::channel::<IPCMessage>(10);
+    let (ipc_tx, ipc_rx) = mpsc::channel::<IPCResponse>(10);
     println!("---------spawning peer 1");
     let sender = tx1.clone();
     tokio::spawn(async move {
@@ -48,7 +48,7 @@ async fn test_data_channel() {
     let (tx2, rx2) = mpsc::channel(10);
 
     //Used to transmit ipc message back to sender
-    let (ipc_tx2, ipc_rx2) = mpsc::channel::<IPCMessage>(10);
+    let (ipc_tx2, ipc_rx2) = mpsc::channel::<IPCResponse>(10);
     println!("---------spawning peer 2");
     let sender = tx2.clone();
     tokio::spawn(async move {
@@ -63,7 +63,7 @@ async fn test_data_channel() {
         timestamp: chrono::Utc::now(),
     };
     let result = tx2
-        .send(RunMessage::SendMessage(p1_node_id, text_message))
+        .send(RunMessage::SendMessage("TEMP".to_string(), text_message))
         .await;
     assert!(result.is_ok());
     assert!(result.is_ok());
