@@ -18,6 +18,7 @@ pub enum IPCMessage {
     UpdateStatus(UpdateStatusMsg),
     SendMessage(SendMessageMsg),
     GetUsers,
+    Shutdown,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -95,7 +96,16 @@ pub async fn listen(
                         RunMessage::SendMessage(send_message.display_name, msg_content)
                     }
                     IPCMessage::GetUsers => RunMessage::GetUsers,
+                    IPCMessage::Shutdown => RunMessage::Shutdown,
                 };
+
+                if run_message == RunMessage::Shutdown {
+                    runtime_tx
+                        .send(run_message)
+                        .await
+                        .expect("Failed to send run message from listener");
+                    break;
+                }
 
                 runtime_tx
                     .send(run_message)
@@ -109,6 +119,7 @@ pub async fn listen(
                     socket.write(&bytes).await?;
                 }
             }
+            Ok(())
         }
         Err(e) => {
             error!("Error opening socket to 7878 {}", e);

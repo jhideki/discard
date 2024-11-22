@@ -314,6 +314,10 @@ pub async fn run(
                 let response = SendUsersResp { users };
                 data_tx.send(IPCResponse::SendUsers(response)).await?;
             }
+            RunMessage::Shutdown => {
+                info!("Shutting down...");
+                break;
+            }
         }
     }
 

@@ -11,9 +11,23 @@ type TCPClient struct {
 	conn net.Conn
 }
 
+type User struct {
+	DisplayName string `json:"displayName"`
+	NodeId      string `json:"nodeId"`
+}
+
 type IPCMessage struct {
 	MsgType string `json:"type"`
 	Content string `json:"data"`
+}
+
+type IPCResponse struct {
+	MsgType string `json:"type"`
+	Content string `json:"data"`
+}
+
+type SendUsersResp struct {
+	Users []User `json:"users"`
 }
 
 type AddUser struct {
@@ -27,8 +41,8 @@ type UpdateStatus struct {
 }
 
 type SendMessage struct {
-	NodeId  string `json:"nodeId"`
-	Content string `json:"content"`
+	DisplayName string `json:"displayName"`
+	Content     string `json:"content"`
 }
 
 func (client *TCPClient) AddUser(nodeId string, displayName string) {
@@ -39,6 +53,28 @@ func (client *TCPClient) AddUser(nodeId string, displayName string) {
 	}
 	ipcMessage := IPCMessage{"AddUser", string(content)}
 	client.Send(ipcMessage)
+}
+
+func (client *TCPClient) GetUsers() []User {
+	message := IPCMessage{MsgType: "GetUsers", Content: ""}
+	client.Send(message)
+	buffer := make([]byte, 1024)
+	n, err := client.conn.Read(buffer)
+	if err != nil {
+		log.Fatal("Error reading bytes from client")
+	} else {
+		println("Succesfully read ", n, " bytes")
+	}
+	var response struct {
+		Users []User `json:"users"`
+	}
+	err = json.Unmarshal(buffer[:n], &response)
+	if err != nil {
+		log.Fatal("Error deserializing response")
+	}
+
+	return response.Users
+
 }
 
 func (client *TCPClient) SendMessage(nodeId string, displayName string) {
