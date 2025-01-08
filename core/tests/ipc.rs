@@ -25,9 +25,9 @@ async fn test_ipc_get_messages() {
 
     cleanup.remove_test_paths();
     //Send RunMessage
-    let (runmessage_tx, mut runmessage_rx) = mpsc::channel(100);
+    let (runmessage_tx, runmessage_rx) = mpsc::channel(100);
     //Used to receive and send data back out through the socket
-    let (data_tx, mut data_rx) = mpsc::channel(100);
+    let (data_tx, data_rx) = mpsc::channel(100);
 
     //Spawn ipc handler
     let runtime_tx = runmessage_tx.clone();
@@ -47,14 +47,15 @@ async fn test_ipc_get_messages() {
         .expect("Failed to add dummy user");
 
     tokio::spawn(async move {
-        run(client, runmessage_tx, runmessage_rx, data_tx).await;
+        run(client, runmessage_tx, runmessage_rx, data_tx)
+            .await
+            .expect("Failed to run client");
     });
 
     let result = match timeout(Duration::from_secs(5), async {
         loop {
             let result = TcpStream::connect("127.0.0.1:7878").await;
             if result.is_ok() {
-                println!("Connected on 127.0.0.1:7878");
                 return result;
             }
             sleep(Duration::from_secs(1)).await;
@@ -78,15 +79,14 @@ async fn test_ipc_get_messages() {
     let result = stream.read(&mut buf).await;
     assert!(result.is_ok(), "Error reading resp bytes");
     let num_bytes = result.unwrap();
-    println!("--- Num bytes recieved = {}", num_bytes);
 
     buf = buf[0..num_bytes].to_vec();
     let response_msg: IPCResponse =
         serde_json::from_slice(&buf).expect("Error deserialzing ipc response");
-    if let IPCResponse::SendUsers(users) = response_msg {
-        for user in users.users {
-            test_users.remove(&user.display_name);
-        }
+    let IPCResponse::SendUsers(users) = response_msg;
+
+    for user in users.users {
+        test_users.remove(&user.display_name);
     }
 
     assert!(
@@ -142,8 +142,6 @@ async fn test_ipc_basic() {
     };
 
     let test_message = IPCMessage::SendMessage(test_message);
-    let test_json = serde_json::to_string(&test_message).expect("Error converting to string");
-    println!("{}", test_json);
     let bytes = serde_json::to_vec(&test_message).expect("failed to serialize message");
 
     let recv_check = tokio::spawn(async move {

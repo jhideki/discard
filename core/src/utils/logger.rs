@@ -7,7 +7,7 @@ pub fn init_tracing() {
         .with_line_number(true)
         .with_file(true)
         .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    let _ = tracing::subscriber::set_default(subscriber);
 }
 
 pub fn init_tracing_no_filt() {
