@@ -9,7 +9,7 @@ use utils::Cleanup;
 async fn test_db_basic() {
     //Setup
     logger::init_tracing();
-    let test_paths = vec!["./test_db.db3", "./test-path4"];
+    let test_paths = vec!["./test_db_basic1", "./test_db_basic2"];
 
     let node = iroh::node::Node::memory().spawn().await.unwrap();
     let serialized_id = serde_json::to_string(&node.node_id()).unwrap();

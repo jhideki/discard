@@ -1,8 +1,7 @@
 mod utils;
 
-use anyhow::Result;
 use discard::core::client::{run, Client};
-use discard::core::ipc::{self, IPCMessage, IPCResponse, SendMessageMsg};
+use discard::core::ipc::{self, IPCMessage, IPCResponse, SendMessageMsg, SendUsersResp};
 use discard::utils::logger;
 use iroh::net::key::PublicKey;
 use tokio::io::AsyncReadExt;
@@ -16,7 +15,7 @@ use std::collections::HashSet;
 #[tokio::test]
 async fn test_ipc_get_messages() {
     //Test setup/cleanup
-    let test_paths = vec!["./test_path"];
+    let test_paths = vec!["./test_ipc_get_messages"];
 
     logger::init_tracing();
     let cleanup = Cleanup {
@@ -98,7 +97,7 @@ async fn test_ipc_get_messages() {
 #[tokio::test]
 async fn test_ipc_basic() {
     //Test setup/cleanup
-    let test_paths = vec!["./test_path"];
+    let test_paths = vec!["./test_ipc_basic"];
     const NUM_MSGS: usize = 5;
 
     logger::init_tracing();
@@ -110,20 +109,17 @@ async fn test_ipc_basic() {
     //Send RunMessage
     let (runmessage_tx, mut runmessage_rx) = mpsc::channel(100);
     //Used to receive and send data back out through the socket
-    let (_data_tx, data_rx) = mpsc::channel(100);
+    let (ipc_tx, ipc_rx) = mpsc::channel(100);
 
     //Spawn ipc handler
     let runtime_tx = runmessage_tx.clone();
-    tokio::spawn(async move { ipc::listen(data_rx, runtime_tx, "7878".to_string()).await });
-
-    let client = Client::new(test_paths[0]).await;
-    let node_id = client.get_node_id();
+    tokio::spawn(async move { ipc::listen(ipc_rx, runtime_tx, "7879".to_string()).await });
 
     let result = match timeout(Duration::from_secs(5), async {
         loop {
-            let result = TcpStream::connect("127.0.0.1:7878").await;
+            let result = TcpStream::connect("127.0.0.1:7879").await;
             if result.is_ok() {
-                println!("Connected on 127.0.0.1:7878");
+                println!("Connected on 127.0.0.1:7879");
                 return result;
             }
             sleep(Duration::from_secs(1)).await;
@@ -144,36 +140,46 @@ async fn test_ipc_basic() {
     let test_message = IPCMessage::SendMessage(test_message);
     let bytes = serde_json::to_vec(&test_message).expect("failed to serialize message");
 
+    //Simulate runtime
     let recv_check = tokio::spawn(async move {
         let mut num_recv = 0;
-        loop {
-            let result = match timeout(Duration::from_secs(5), async {
-                if let Some(_) = runmessage_rx.recv().await {
-                    num_recv += 1;
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("Timeout error"))
+        let result = match timeout(Duration::from_secs(60), async {
+            while let Some(msg) = runmessage_rx.recv().await {
+                num_recv += 1;
+                if num_recv == 5 {
+                    break;
                 }
-            })
-            .await
-            {
-                Ok(_) => Ok(()),
-                Err(e) => Err(e),
-            };
-
-            assert!(result.is_ok(), "Failed to assert recv runtime message");
-            if num_recv == 5 {
-                break;
+                let runtime_response = ipc_tx
+                    .send(IPCResponse::SendUsers(SendUsersResp { users: Vec::new() }))
+                    .await;
+                assert!(
+                    runtime_response.is_ok(),
+                    "Error: {:?}",
+                    runtime_response.err()
+                )
             }
-        }
+        })
+        .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        };
+
+        assert!(
+            result.is_ok(),
+            "Failed to assert recv runtime message. Err: {:?}",
+            result.unwrap_err()
+        );
     });
+
+    println!("num messages: {:?}", NUM_MSGS);
 
     for i in 0..NUM_MSGS {
         let result = stream
             .write(&bytes)
             .await
             .map_err(|e| println!("error writing to streamm: {e}"));
-        //assert!(result.is_ok(), "Failed to write to stream");
+        assert!(result.is_ok(), "Failed to write to stream");
         println!("Succesfully wrote {} bytes", result.unwrap());
         println!("Succesfully sent message: {}", i);
 

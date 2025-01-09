@@ -1,11 +1,8 @@
 mod utils;
 
-use discard::core::ipc::{IPCMessage, IPCResponse};
+use discard::core::ipc::IPCResponse;
 use discard::utils::types::TextMessage;
-use tokio::sync::{mpsc, oneshot, Notify};
-use tracing::{error, info};
-
-use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use discard::core::client::{self, Client};
 use discard::utils::enums::RunMessage;
@@ -16,7 +13,11 @@ use utils::Cleanup;
 #[tokio::test]
 async fn test_data_channel() {
     logger::init_tracing();
-    let test_paths = vec!["./test-root1", "./test-root2", "./test-db.db3"];
+    let test_paths = vec![
+        "./test_data_channel1",
+        "./test_data_channel2",
+        "./test_data_channel3",
+    ];
 
     //Will remove test paths again at the end of the test
     let cleanup = Cleanup {
@@ -24,14 +25,12 @@ async fn test_data_channel() {
     };
     cleanup.remove_test_paths();
 
-    let mut p1 = Client::new(test_paths[0]).await;
-    let p1_node_id = p1.get_node_id();
+    let p1 = Client::new(test_paths[0]).await;
     let p2 = Client::new(test_paths[1]).await;
-    let p2_node_id = p2.get_node_id();
 
     //peer 1 channel to simulate client receiving a message
     let (tx1, rx1) = mpsc::channel::<RunMessage>(10);
-    let (ipc_tx, ipc_rx) = mpsc::channel::<IPCResponse>(10);
+    let (ipc_tx, _) = mpsc::channel::<IPCResponse>(10);
     println!("---------spawning peer 1");
     let sender = tx1.clone();
     tokio::spawn(async move {
@@ -48,7 +47,7 @@ async fn test_data_channel() {
     let (tx2, rx2) = mpsc::channel(10);
 
     //Used to transmit ipc message back to sender
-    let (ipc_tx2, ipc_rx2) = mpsc::channel::<IPCResponse>(10);
+    let (ipc_tx2, _) = mpsc::channel::<IPCResponse>(10);
     println!("---------spawning peer 2");
     let sender = tx2.clone();
     tokio::spawn(async move {
