@@ -7,6 +7,7 @@ pub mod utils {
     pub mod types;
 }
 pub mod core {
+    pub mod audio;
     pub mod client;
     pub mod ipc;
     pub mod rtc;

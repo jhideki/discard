@@ -15,14 +15,20 @@ use tokio::time::{sleep, timeout, Duration};
 use tracing::{error, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::{
-    api::API,
+    api::{
+        media_engine::{MIME_TYPE_H264, MIME_TYPE_OPUS},
+        API,
+    },
     data_channel::data_channel_message::DataChannelMessage,
     data_channel::RTCDataChannel,
     ice_transport::ice_candidate::RTCIceCandidate,
+    media::{io::ogg_reader::OggReader, Sample},
     peer_connection::{
         configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription, RTCPeerConnection,
     },
+    rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
+    track::track_local::{track_local_static_sample::TrackLocalStaticSample, TrackLocal},
 };
 
 pub struct APIWrapper(pub API);
@@ -56,9 +62,9 @@ pub struct Connection {
     signaler: Arc<SessionExchange>,
     task_handles: Vec<JoinHandle<()>>,
     data_channel: Option<RTCDataChannelWrapper>,
-    id: usize,
     remote_node_id: Arc<Mutex<Option<NodeId>>>,
     data_channel_notify: Arc<Notify>,
+    audio_track: Option<Arc<TrackLocalStaticSample>>,
 }
 
 impl Connection {
@@ -67,7 +73,6 @@ impl Connection {
         config: RTCConfigurationWrapper,
         conn_type: ConnType,
         signaler: Arc<SessionExchange>,
-        id: usize,
     ) -> Self {
         let api = &api.0;
         let config = config.0;
@@ -83,9 +88,9 @@ impl Connection {
             signaler,
             task_handles: Vec::new(),
             data_channel: None,
-            id,
             remote_node_id: Arc::new(Mutex::new(None)),
             data_channel_notify: Arc::new(Notify::new()),
+            audio_track: None,
         }
     }
 
@@ -380,6 +385,35 @@ impl Connection {
         rx
     }
 
+    pub async fn init_audio_stream(&mut self) -> Result<()> {
+        let pc = Arc::clone(&self.peer_connection);
+        let audio_track = Arc::new(TrackLocalStaticSample::new(
+            RTCRtpCodecCapability {
+                mime_type: MIME_TYPE_OPUS.to_owned(),
+                ..Default::default()
+            },
+            "audio".to_owned(),
+            "webrtc-rs".to_owned(),
+        ));
+
+        // Add this newly created track to the PeerConnection
+        let rtp_sender = pc
+            .add_track(Arc::clone(&audio_track) as Arc<dyn TrackLocal + Send + Sync>)
+            .await?;
+
+        // Read incoming RTCP packets
+        // Before these packets are returned they are processed by interceptors. For things
+        // like NACK this needs to be called.
+        tokio::spawn(async move {
+            let mut rtcp_buf = vec![0u8; 1500];
+            while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+            Result::<()>::Ok(())
+        });
+        self.audio_track = Some(audio_track);
+
+        Ok(())
+    }
+
     //Helper function to allow client to sleep until data channel is opened
     pub async fn wait_for_data_channel(&self) {
         let notify = Arc::clone(&self.data_channel_notify);
@@ -396,9 +430,9 @@ impl Connection {
         let pc = Arc::clone(&self.peer_connection);
         if let Some(data_channel) = &self.data_channel {
             let dc = Arc::clone(&data_channel.0);
-            dc.close().await;
+            let _ = dc.close().await;
         }
-        pc.close().await;
+        pc.close().await.expect("Error closing peer connection");
         Ok(())
     }
 

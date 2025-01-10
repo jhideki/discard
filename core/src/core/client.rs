@@ -318,6 +318,9 @@ pub async fn run(
                 info!("Shutting down...");
                 break;
             }
+            RunMessage::AudioStream => {
+                info!("Creating audio stream connection...");
+            }
         }
     }
 
@@ -337,7 +340,6 @@ pub async fn init_connection(
             client.rtc_config.config.clone(),
             ConnType::Offerer,
             client.session_exchange.clone(),
-            client.connections.len(),
         )
         .await;
         conn
@@ -387,7 +389,6 @@ pub async fn receive_connection(client: Arc<Mutex<Client>>) -> Result<()> {
             client.rtc_config.config.clone(),
             ConnType::Offerer,
             client.session_exchange.clone(),
-            client.connections.len(),
         )
         .await;
         conn
@@ -415,6 +416,14 @@ pub async fn receive_connection(client: Arc<Mutex<Client>>) -> Result<()> {
     run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]).await;
     Ok(())
 }
+
+pub async fn init_call(
+    client: Arc<Mutex<Client>>,
+    remote_node_id: NodeId,
+    sender: oneshot::Sender<usize>,
+) {
+}
+pub async fn recieve_call() {}
 
 pub async fn run_connection(
     client: Arc<Mutex<Client>>,

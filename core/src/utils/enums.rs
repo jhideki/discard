@@ -73,6 +73,7 @@ pub enum RunMessage {
     ReceiveMessage,
     GetUsers,
     Shutdown,
+    AudioStream,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
