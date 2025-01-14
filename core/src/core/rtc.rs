@@ -5,7 +5,7 @@ use crate::utils::{
     types::TextMessage,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use iroh::net::NodeId;
 use std::sync::Arc;
@@ -182,7 +182,8 @@ impl Connection {
         }));
     }
 
-    pub async fn get_remote_node_id(&self) -> Result<()> {
+    //NOT a gettter method. It uses the signlar to retreive the peers node_id
+    pub async fn retrieve_remote_node_id(&self) -> Result<()> {
         let signaler = Arc::clone(&self.signaler);
 
         //Retrieve remote node id so we can send back our ice candidatse + sdps
@@ -200,6 +201,14 @@ impl Connection {
         let mut gaurd = self.remote_node_id.lock().await;
         *gaurd = Some(remote_node_id);
         Ok(())
+    }
+
+    pub async fn get_remote_node_id(&self) -> Result<NodeId> {
+        if let Some(node_id) = *self.remote_node_id.lock().await {
+            return Ok(node_id);
+        } else {
+            Err(anyhow!("Error geting peer's node id"))
+        }
     }
 
     //Initiates the webrtc handshake by using the signaler to send the remote peer our sdp

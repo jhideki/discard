@@ -6,7 +6,7 @@ use crate::database::{
     models::{FromRow, Message, User},
 };
 
-use crate::utils::enums::UserStatus;
+use crate::utils::enums::{SessionType, UserStatus};
 use crate::utils::{
     constants::{
         SDP_ALPN, SEND_TEXT_MESSAGE_DELAY, SEND_TEXT_MESSAGE_TIMEOUT, SIGNAL_ALPN, STUN_SERVERS,
@@ -35,6 +35,7 @@ use webrtc::{
 };
 
 use futures::stream::StreamExt;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -46,7 +47,7 @@ struct RTCConfig {
 
 #[derive(Debug)]
 pub struct Client {
-    connections: Vec<Connection>,
+    connections: HashMap<String, Connection>,
     rtc_config: RTCConfig,
     node: Node<Store>,
     session_exchange: Arc<SessionExchange>,
@@ -126,7 +127,7 @@ impl Client {
         }
 
         Client {
-            connections: Vec::new(),
+            connections: HashMap::new(),
             rtc_config: RTCConfig {
                 api: APIWrapper(api),
                 config: RTCConfigurationWrapper(config),
@@ -253,6 +254,17 @@ impl Client {
         let users = user_iter.map(|m| m.unwrap());
         Ok(users.collect())
     }
+
+    pub fn get_display_name(&self, node_id: String) -> Result<String> {
+        let db = &self.db;
+        let conn = db.get_conn();
+        let display_name: String = conn.query_row(
+            "select display_name from users where node_id = ?1 fetch first 1 row only",
+            [node_id],
+            |row| row.get(0),
+        )?;
+        Ok(display_name)
+    }
 }
 
 //Main runtime loop of backend
@@ -269,24 +281,25 @@ pub async fn run(
     let client = Arc::new(Mutex::new(client));
     while let Some(message) = rx.recv().await {
         match message {
-            RunMessage::ReceiveMessage => {
+            RunMessage::RecvConn(session_type) => {
                 info!("Run message received");
                 let client = Arc::clone(&client);
-                let handle = tokio::spawn(receive_connection(client));
+                let handle = tokio::spawn(receive_connection(client, SessionType::Chat));
             }
-            RunMessage::SendMessage(display_name, message) => {
+            RunMessage::InitConn(session_type, display_name) => {
                 let client = Arc::clone(&client);
                 let client2 = Arc::clone(&client);
 
                 let mut client2 = client2.lock().await;
-                //Retreive connection id once connection is established
-                let (tx, rx) = oneshot::channel();
 
                 let node_id = client2.get_user_node_id(display_name)?;
 
-                let handle = tokio::spawn(init_connection(client, node_id, tx));
+                let handle =
+                    tokio::spawn(init_connection(client, node_id, display_name, session_type));
                 let conn_id = rx.await?;
-
+            }
+            //Assumes connection is already established
+            RunMessage::SendMessage(message) => {
                 //Send message after connection is established
                 client2.send_message(conn_id, message).await?;
             }
@@ -320,6 +333,9 @@ pub async fn run(
             }
             RunMessage::AudioStream => {
                 info!("Creating audio stream connection...");
+                let client = Arc::clone(&client);
+                let mut client = client.lock().await;
+                let node_id = client.get_user_node_id(display_name).await;
             }
         }
     }
@@ -330,7 +346,8 @@ pub async fn run(
 pub async fn init_connection(
     client: Arc<Mutex<Client>>,
     remote_node_id: NodeId,
-    sender: oneshot::Sender<usize>,
+    display_name: String,
+    session_type: SessionType,
 ) -> Result<()> {
     //Initialize the connection then drop the mutex on client
     let mut conn = {
@@ -347,8 +364,19 @@ pub async fn init_connection(
 
     conn.set_remote_node_id(remote_node_id).await?;
 
+    let mut receivers: Vec<mpsc::Receiver<MessageType>> = Vec::new();
+
+    match session_type {
+        SessionType::Idle => {}
+        SessionType::Chat => {
+            let dc_rx = conn.create_data_channel().await;
+            receivers.push(dc_rx);
+        }
+        SessionType::Call => {}
+        SessionType::Video => {}
+    }
+
     //Typical WebRTC steps...
-    let dc_rx = conn.create_data_channel().await;
     info!("Created data channel!");
     conn.init_ice_handler().await;
     info!("Listening for ice candidates");
@@ -361,27 +389,25 @@ pub async fn init_connection(
 
     let conn_rx = conn.monitor_connection().await;
     info!("Connection is running");
+    receivers.push(conn_rx);
 
     conn.wait_for_data_channel().await;
 
-    //Save connection so we can refernce it by index later
+    //Save connection so we can refernce it by peer's display_name later
     {
         let mut client = client.lock().await;
         let connections = &mut client.connections;
-        connections.push(conn);
-
-        let id = connections.len() - 1;
-        match sender.send(id) {
-            Ok(_) => {}
-            Err(e) => error!("Error sending conn id {}", e),
-        };
+        connections.insert(display_name, conn);
     }
 
-    run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]).await;
+    run_connection(Arc::clone(&client), receivers).await;
     Ok(())
 }
 
-pub async fn receive_connection(client: Arc<Mutex<Client>>) -> Result<()> {
+pub async fn receive_connection(
+    client: Arc<Mutex<Client>>,
+    session_type: SessionType,
+) -> Result<()> {
     let mut conn = {
         let client = client.lock().await;
         let conn = Connection::new(
@@ -393,15 +419,28 @@ pub async fn receive_connection(client: Arc<Mutex<Client>>) -> Result<()> {
         .await;
         conn
     };
-    let dc_rx = conn.register_data_channel().await;
-    info!("Registered data channel");
+
+    let mut receivers: Vec<mpsc::Receiver<MessageType>> = Vec::new();
+
+    match session_type {
+        SessionType::Idle => {}
+        SessionType::Chat => {
+            let dc_rx = conn.register_data_channel().await;
+            receivers.push(dc_rx);
+            info!("Registered data channel");
+        }
+        SessionType::Call => {}
+        SessionType::Video => {}
+    }
+
     conn.init_ice_handler().await;
     info!("init ice handler");
     conn.init_remote_handler().await?;
     info!("init remote handler");
-    conn.get_remote_node_id().await?;
+    conn.retrieve_remote_node_id().await?;
     conn.answer().await?;
     let conn_rx = conn.monitor_connection().await;
+    receivers.push(conn_rx);
 
     info!("Connection is running");
     conn.wait_for_data_channel().await;
@@ -410,10 +449,14 @@ pub async fn receive_connection(client: Arc<Mutex<Client>>) -> Result<()> {
     {
         let mut client = client.lock().await;
         let connections = &mut client.connections;
-        connections.push(conn);
+        if let Ok(remote_node_id) = conn.get_remote_node_id().await {
+            let remote_node_id_str = remote_node_id.to_string();
+            let display_name = client.get_display_name(remote_node_id_str)?;
+            connections.insert(display_name, conn);
+        }
     }
 
-    run_connection(Arc::clone(&client), vec![dc_rx, conn_rx]).await;
+    run_connection(Arc::clone(&client), receivers).await;
     Ok(())
 }
 

@@ -5,7 +5,7 @@ use crate::utils::errors::ParseEnumError;
 use crate::utils::types::{NodeId, TextMessage};
 use serde::{Deserialize, Serialize};
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum SessionType {
     Idle,
     Chat,
@@ -68,12 +68,13 @@ pub enum SignalMessage {
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub enum RunMessage {
     UpdateStatus(NodeId, UserStatus),
-    SendMessage(String, TextMessage),
     Adduser(NodeId, String),
-    ReceiveMessage,
+    InitConn(SessionType, String),
+    RecvConn(SessionType),
     GetUsers,
     Shutdown,
     AudioStream,
+    SendMessage(String),
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
