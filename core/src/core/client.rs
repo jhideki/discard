@@ -186,8 +186,12 @@ impl Client {
         node_id.clone()
     }
 
-    pub async fn send_message(&mut self, conn_id: usize, message: TextMessage) -> Result<()> {
-        let conn = &self.connections[conn_id];
+    pub async fn send_message(&mut self, display_name: String, message: String) -> Result<()> {
+        let message = TextMessage {
+            content: message,
+            timestamp: chrono::Utc::now(),
+        };
+        let conn = &self.connections[&display_name];
         match timeout(Duration::from_secs(SEND_TEXT_MESSAGE_TIMEOUT), async {
             loop {
                 match conn.send_dc_message(message.content.clone()).await {
@@ -234,7 +238,7 @@ impl Client {
         Ok(messages.collect())
     }
 
-    pub fn get_user_node_id(&self, display_name: String) -> Result<NodeId> {
+    pub fn get_user_node_id(&self, display_name: &String) -> Result<NodeId> {
         let db = &self.db;
         let conn = db.get_conn();
         let node_id: String = conn.query_row(
@@ -244,6 +248,17 @@ impl Client {
         )?;
         let node_id: NodeId = serde_json::from_str(&node_id)?;
         Ok(node_id)
+    }
+
+    pub fn get_user(&self, display_name: String) -> Result<User> {
+        let db = &self.db;
+        let conn = db.get_conn();
+        let user = conn.query_row(
+            "select * from users where node_id = ?1",
+            [display_name],
+            User::from_row,
+        )?;
+        Ok(user)
     }
 
     pub fn get_users(&self) -> Result<Vec<User>> {
@@ -290,18 +305,19 @@ pub async fn run(
                 let client = Arc::clone(&client);
                 let client2 = Arc::clone(&client);
 
-                let mut client2 = client2.lock().await;
+                let client2 = client2.lock().await;
 
-                let node_id = client2.get_user_node_id(display_name)?;
+                let node_id = client2.get_user_node_id(&display_name)?;
 
                 let handle =
                     tokio::spawn(init_connection(client, node_id, display_name, session_type));
-                let conn_id = rx.await?;
             }
             //Assumes connection is already established
-            RunMessage::SendMessage(message) => {
+            RunMessage::SendMessage(display_name, message) => {
                 //Send message after connection is established
-                client2.send_message(conn_id, message).await?;
+                let client = Arc::clone(&client);
+                let mut client = client.lock().await;
+                client.send_message(display_name, message).await?;
             }
             RunMessage::UpdateStatus(node_id, user_status) => {
                 let client = Arc::clone(&client);
@@ -327,15 +343,15 @@ pub async fn run(
                 let response = SendUsersResp { users };
                 data_tx.send(IPCResponse::SendUsers(response)).await?;
             }
+            RunMessage::GetUser(display_name) => {
+                let client = Arc::clone(&client);
+                let client = client.lock().await;
+                let user = client.get_user(display_name)?;
+                data_tx.send(IPCResponse::SendUser(user)).await;
+            }
             RunMessage::Shutdown => {
                 info!("Shutting down...");
                 break;
-            }
-            RunMessage::AudioStream => {
-                info!("Creating audio stream connection...");
-                let client = Arc::clone(&client);
-                let mut client = client.lock().await;
-                let node_id = client.get_user_node_id(display_name).await;
             }
         }
     }
@@ -445,15 +461,12 @@ pub async fn receive_connection(
     info!("Connection is running");
     conn.wait_for_data_channel().await;
 
-    //Save connection so we can refernce it by index later
-    {
+    if let Ok(remote_node_id) = conn.get_remote_node_id().await {
         let mut client = client.lock().await;
+        let remote_node_id_str = remote_node_id.to_string();
+        let display_name = client.get_display_name(remote_node_id_str)?;
         let connections = &mut client.connections;
-        if let Ok(remote_node_id) = conn.get_remote_node_id().await {
-            let remote_node_id_str = remote_node_id.to_string();
-            let display_name = client.get_display_name(remote_node_id_str)?;
-            connections.insert(display_name, conn);
-        }
+        connections.insert(display_name, conn);
     }
 
     run_connection(Arc::clone(&client), receivers).await;

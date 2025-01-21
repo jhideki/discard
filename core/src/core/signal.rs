@@ -9,7 +9,7 @@ use tracing::{debug, error, info};
 use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::utils::enums::{MessageType, RunMessage, SignalMessage, UserStatus};
+use crate::utils::enums::{MessageType, RunMessage, SessionType, SignalMessage, UserStatus};
 use crate::utils::types::NodeId;
 use crate::utils::{
     constants::{SDP_ALPN, SIGNAL_ALPN},
@@ -126,8 +126,8 @@ impl ProtocolHandler for Signaler {
             //Notify listner to set peer status to 'online'
             if let Some(sender) = sender.as_ref() {
                 match status {
-                    SignalMessage::SendConnection => {
-                        let _ = sender.send(RunMessage::ReceiveMessage).await;
+                    SignalMessage::SendConnection(session_type) => {
+                        let _ = sender.send(RunMessage::RecvConn(session_type)).await;
                     }
                     SignalMessage::Online(node_id, user_status) => {
                         let _ = sender
@@ -167,13 +167,17 @@ impl Signaler {
         Ok(())
     }
 
-    pub async fn notify_connection(&self, remote_node_id: NodeId) -> Result<()> {
+    pub async fn notify_connection(
+        &self,
+        remote_node_id: NodeId,
+        session_type: SessionType,
+    ) -> Result<()> {
         let conn = &self
             .endpoint
             .connect_by_node_id(remote_node_id, SIGNAL_ALPN)
             .await?;
         let (mut send, _recv) = conn.open_bi().await?;
-        let buf = bincode::serialize(&SignalMessage::SendConnection)?;
+        let buf = bincode::serialize(&SignalMessage::SendConnection(session_type))?;
         send.write_all(&buf).await;
         send.finish().await;
         Ok(())

@@ -14,14 +14,14 @@ use utils::Cleanup;
 async fn test_data_channel() {
     logger::init_tracing();
     let test_paths = vec![
-        "./test_data_channel1",
-        "./test_data_channel2",
-        "./test_data_channel3",
+        "./test_data_channel1".to_string(),
+        "./test_data_channel2".to_string(),
+        "./test_data_channel3".to_string(),
     ];
 
     //Will remove test paths again at the end of the test
     let cleanup = Cleanup {
-        test_paths: &test_paths,
+        test_paths: test_paths,
     };
     cleanup.remove_test_paths();
 
@@ -38,7 +38,12 @@ async fn test_data_channel() {
         assert!(result.is_ok());
     });
 
-    let result = tx1.send(RunMessage::ReceiveMessage).await;
+    let result = tx1
+        .send(RunMessage::RecvConn(
+            discard::utils::enums::SessionType::Chat,
+        ))
+        .await;
+
     assert!(result.is_ok());
     println!("recievemessage sent");
     assert!(result.is_ok());
@@ -62,7 +67,10 @@ async fn test_data_channel() {
         timestamp: chrono::Utc::now(),
     };
     let result = tx2
-        .send(RunMessage::SendMessage("TEMP".to_string(), text_message))
+        .send(RunMessage::SendMessage(
+            "TEMP".to_string(),
+            "test".to_string(),
+        ))
         .await;
     assert!(result.is_ok());
     assert!(result.is_ok());

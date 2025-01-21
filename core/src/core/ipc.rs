@@ -19,14 +19,22 @@ pub enum IPCMessage {
     SendMessage(SendMessageMsg),
     GetUsers,
     Shutdown,
+    GetNodeId,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum IPCResponse {
     SendUsers(SendUsersResp),
+    SendUser(User),
+    Error(IPCErrorType),
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct IPCErrorType {
+    #[serde(rename = "errorMessage")]
+    pub error: String,
+}
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct SendUsersResp {
     #[serde(rename = "users")]
@@ -72,40 +80,13 @@ pub async fn listen(
                 let num_bytes = socket.read(&mut buf).await.expect("Error reading...");
                 buf = buf[0..num_bytes].to_vec();
 
-                let ipc_message = match serde_json::from_slice::<IPCMessage>(&buf) {
+                let run_message = match serde_json::from_slice::<RunMessage>(&buf) {
                     Ok(ipc_message) => ipc_message,
                     Err(e) => {
                         error!("Error deserializing IPC message: {e}");
                         continue;
                     }
                 };
-
-                let run_message = match ipc_message {
-                    IPCMessage::AddUser(add_user) => {
-                        RunMessage::Adduser(add_user.node_id, add_user.display_name)
-                    }
-                    IPCMessage::UpdateStatus(update_status) => {
-                        RunMessage::UpdateStatus(update_status.node_id, update_status.user_status)
-                    }
-                    IPCMessage::SendMessage(send_message) => {
-                        info!("------------- IPC message received");
-                        let msg_content = TextMessage {
-                            content: send_message.content,
-                            timestamp: chrono::Utc::now(),
-                        };
-                        RunMessage::SendMessage(send_message.display_name, msg_content)
-                    }
-                    IPCMessage::GetUsers => RunMessage::GetUsers,
-                    IPCMessage::Shutdown => RunMessage::Shutdown,
-                };
-
-                if run_message == RunMessage::Shutdown {
-                    runtime_tx
-                        .send(run_message)
-                        .await
-                        .expect("Failed to send run message from listener");
-                    break;
-                }
 
                 runtime_tx
                     .send(run_message)
@@ -119,7 +100,6 @@ pub async fn listen(
                     socket.write(&bytes).await?;
                 }
             }
-            Ok(())
         }
         Err(e) => {
             error!("Error opening socket to 7878 {}", e);
